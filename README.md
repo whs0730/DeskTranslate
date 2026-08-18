@@ -9,9 +9,14 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.2.4-5b3df5" alt="Version 0.2.4">
+  <a href="https://github.com/whs0730/DeskTranslate/releases/latest">
+  <img src="https://img.shields.io/github/v/release/whs0730/DeskTranslate?label=version" alt="Latest Release">
+</a>
   <img src="https://img.shields.io/badge/platform-Windows-0078d4" alt="Windows">
-  <img src="https://img.shields.io/badge/license-MIT-22a06b" alt="MIT License">
+
+  <a href="LICENSE">
+    <img src="https://img.shields.io/badge/license-MIT-22a06b" alt="MIT License">
+  </a>
 </p>
 
 DeskTranslate 启动后显示紧凑的翻译窗口。关闭窗口不会结束进程，程序会继续驻留系统托盘，适合随时唤出进行短句和单词查询。
