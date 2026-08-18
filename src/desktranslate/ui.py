@@ -43,6 +43,9 @@ MIN_WINDOW_HEIGHT = 260
 RESIZE_BORDER_SIZE = 5
 RESIZE_CORNER_SIZE = 12
 MAX_INPUT_CHARACTERS = 3_000
+SHORTCUT_DIALOG_MIN_WIDTH = 340
+SHORTCUT_DIALOG_MIN_HEIGHT = 174
+SHORTCUT_DIALOG_CORNER_SIZE = 18
 
 
 class HoverLabel(tk.Label):
@@ -154,9 +157,19 @@ class ShortcutDialog(tk.Toplevel):
     ) -> None:
         super().__init__(master)
         self.on_save = on_save
+        self._corner_resize_pointer_x = 0
+        self._corner_resize_pointer_y = 0
+        self._corner_resize_origin_x = 0
+        self._corner_resize_origin_y = 0
+        self._corner_resize_width = SHORTCUT_DIALOG_MIN_WIDTH
+        self._corner_resize_height = SHORTCUT_DIALOG_MIN_HEIGHT
+        self._corner_resize_edges = "se"
+        self._corner_resize_handles: list[tk.Frame] = []
         self.title("设置召唤快捷键")
-        self.geometry("340x174")
-        self.resizable(False, False)
+        self.geometry(
+            f"{SHORTCUT_DIALOG_MIN_WIDTH}x{SHORTCUT_DIALOG_MIN_HEIGHT}"
+        )
+        self.resizable(True, True)
         self.configure(bg=COLORS["surface"])
         self.transient(master)
 
@@ -201,7 +214,7 @@ class ShortcutDialog(tk.Toplevel):
         self.error_label.pack(anchor="w", padx=22)
 
         buttons = tk.Frame(self, bg=COLORS["surface"])
-        buttons.pack(fill="x", padx=18, pady=(4, 12))
+        buttons.pack(side="bottom", fill="x", padx=18, pady=(4, 12))
         HoverLabel(buttons, text="取消", command=self.destroy).pack(side="right")
         HoverLabel(
             buttons,
@@ -213,8 +226,85 @@ class ShortcutDialog(tk.Toplevel):
             padx=13,
         ).pack(side="right", padx=6)
 
+        self.update_idletasks()
+        dialog_width = max(SHORTCUT_DIALOG_MIN_WIDTH, self.winfo_reqwidth())
+        dialog_height = max(SHORTCUT_DIALOG_MIN_HEIGHT, self.winfo_reqheight())
+        self.geometry(f"{dialog_width}x{dialog_height}")
+        self.minsize(dialog_width, dialog_height)
+        self._create_corner_resize_handles()
+
         self.protocol("WM_DELETE_WINDOW", self.destroy)
         self.grab_set()
+
+    def _create_corner_resize_handles(self) -> None:
+        specs = (
+            ("nw", "size_nw_se", {"x": 0, "y": 0}),
+            ("ne", "size_ne_sw", {"relx": 1, "x": -SHORTCUT_DIALOG_CORNER_SIZE, "y": 0}),
+            ("sw", "size_ne_sw", {"x": 0, "rely": 1, "y": -SHORTCUT_DIALOG_CORNER_SIZE}),
+            (
+                "se",
+                "size_nw_se",
+                {
+                    "relx": 1,
+                    "rely": 1,
+                    "x": -SHORTCUT_DIALOG_CORNER_SIZE,
+                    "y": -SHORTCUT_DIALOG_CORNER_SIZE,
+                },
+            ),
+        )
+        for edges, cursor, placement in specs:
+            handle = tk.Frame(
+                self,
+                bg=COLORS["surface"],
+                cursor=cursor,
+                width=SHORTCUT_DIALOG_CORNER_SIZE,
+                height=SHORTCUT_DIALOG_CORNER_SIZE,
+            )
+            handle.place(
+                width=SHORTCUT_DIALOG_CORNER_SIZE,
+                height=SHORTCUT_DIALOG_CORNER_SIZE,
+                **placement,
+            )
+            handle.bind(
+                "<ButtonPress-1>",
+                lambda event, active_edges=edges: self._start_corner_resize(
+                    event, active_edges
+                ),
+            )
+            handle.bind("<B1-Motion>", self._resize_from_corner)
+            handle.lift()
+            self._corner_resize_handles.append(handle)
+
+    def _start_corner_resize(self, event: tk.Event, edges: str) -> None:
+        self._corner_resize_pointer_x = event.x_root
+        self._corner_resize_pointer_y = event.y_root
+        self._corner_resize_origin_x = self.winfo_x()
+        self._corner_resize_origin_y = self.winfo_y()
+        self._corner_resize_width = self.winfo_width()
+        self._corner_resize_height = self.winfo_height()
+        self._corner_resize_edges = edges
+
+    def _resize_from_corner(self, event: tk.Event) -> None:
+        delta_x = event.x_root - self._corner_resize_pointer_x
+        delta_y = event.y_root - self._corner_resize_pointer_y
+        min_width, min_height = self.minsize()
+        x = self._corner_resize_origin_x
+        y = self._corner_resize_origin_y
+        width = self._corner_resize_width
+        height = self._corner_resize_height
+
+        if "e" in self._corner_resize_edges:
+            width = max(min_width, self._corner_resize_width + delta_x)
+        if "s" in self._corner_resize_edges:
+            height = max(min_height, self._corner_resize_height + delta_y)
+        if "w" in self._corner_resize_edges:
+            width = max(min_width, self._corner_resize_width - delta_x)
+            x = self._corner_resize_origin_x + self._corner_resize_width - width
+        if "n" in self._corner_resize_edges:
+            height = max(min_height, self._corner_resize_height - delta_y)
+            y = self._corner_resize_origin_y + self._corner_resize_height - height
+
+        self.geometry(f"{width}x{height}{x:+d}{y:+d}")
 
     def _capture(self, event: tk.Event) -> str:
         if event.keysym in {

@@ -5,10 +5,29 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 from desktranslate.config import AppSettings, SettingsStore
-from desktranslate.ui import TranslationWindow
+from desktranslate.ui import ShortcutDialog, TranslationWindow
 
 
 class WindowBehaviorTests(unittest.TestCase):
+    def test_shortcut_corner_resize_changes_both_axes(self) -> None:
+        fake = SimpleNamespace(
+            _corner_resize_pointer_x=100,
+            _corner_resize_pointer_y=100,
+            _corner_resize_origin_x=50,
+            _corner_resize_origin_y=60,
+            _corner_resize_width=340,
+            _corner_resize_height=180,
+            _corner_resize_edges="nw",
+            minsize=Mock(return_value=(340, 180)),
+            geometry=Mock(),
+        )
+
+        ShortcutDialog._resize_from_corner(
+            fake, SimpleNamespace(x_root=60, y_root=40)
+        )
+
+        fake.geometry.assert_called_once_with("380x240+10+0")
+
     def test_enter_translates_and_ctrl_enter_inserts_newline(self) -> None:
         fake = SimpleNamespace(translate=Mock(), input_text=Mock())
 
