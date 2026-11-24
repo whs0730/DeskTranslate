@@ -22,5 +22,21 @@ def app_icon_path() -> Path | None:
     return next((path for path in candidates if path.is_file()), None)
 
 
-__all__ = ["app_icon_path"]
+def frontend_path(name: str = "index.html") -> Path:
+    path = Path(__file__).resolve().parent / "web" / name
+    if not path.is_file():
+        raise FileNotFoundError("界面尚未构建，请先运行 npm ci 和 npm run build")
+    return path
+
+
+def subtitle_model_path() -> Path:
+    from .subtitles import MODEL_NAME
+
+    bundle_root = getattr(sys, "_MEIPASS", None)
+    if bundle_root:
+        return Path(bundle_root) / "models" / MODEL_NAME
+    return Path(__file__).resolve().parents[2] / "models" / MODEL_NAME
+
+
+__all__ = ["app_icon_path", "frontend_path"]
 

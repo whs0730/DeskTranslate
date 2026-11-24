@@ -1,0 +1,571 @@
+<?xml version="1.0" encoding="utf-8"?>
+<merge xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    tools:context=".SettingsActivity">
+
+    <com.whs0730.desktranslate.ui.LiquidBackdropView
+        android:id="@+id/settingsBackdrop"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <LinearLayout
+        android:id="@+id/settingsRoot"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:clipChildren="false"
+        android:clipToPadding="false"
+        android:orientation="vertical">
+
+        <!-- Settings top bar matching desktop .settings-titlebar -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:baselineAligned="false"
+            android:clipChildren="false"
+            android:clipToPadding="false"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingStart="20dp"
+            android:paddingTop="16dp"
+            android:paddingEnd="18dp"
+            android:paddingBottom="10dp">
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/settings"
+                    android:textColor="@color/glass_text_primary"
+                    android:textSize="24sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:text="@string/settings_subtitle"
+                    android:textColor="@color/glass_text_secondary"
+                    android:textSize="12.5sp" />
+            </LinearLayout>
+
+            <com.whs0730.desktranslate.ui.LiquidGlassFrameLayout
+                android:id="@+id/closeSettingsButton"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:clickable="true"
+                android:contentDescription="@string/close_settings"
+                android:focusable="true">
+
+                <ImageView
+                    android:layout_width="18dp"
+                    android:layout_height="18dp"
+                    android:layout_gravity="center"
+                    android:importantForAccessibility="no"
+                    android:src="@drawable/ic_close" />
+            </com.whs0730.desktranslate.ui.LiquidGlassFrameLayout>
+        </LinearLayout>
+
+        <!-- Category pill bar (starts with Translation Options, extensible like desktop tabs) -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingStart="18dp"
+            android:paddingEnd="18dp"
+            android:paddingBottom="10dp">
+
+            <com.whs0730.desktranslate.ui.LiquidGlassFrameLayout
+                android:id="@+id/tabTranslationPill"
+                android:layout_width="wrap_content"
+                android:layout_height="34dp"
+                android:paddingStart="16dp"
+                android:paddingEnd="16dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center"
+                    android:text="@string/settings_tab_translation"
+                    android:textColor="@color/mint_accent_text"
+                    android:textSize="13.5sp"
+                    android:textStyle="bold" />
+            </com.whs0730.desktranslate.ui.LiquidGlassFrameLayout>
+        </LinearLayout>
+
+        <androidx.core.widget.NestedScrollView
+            android:id="@+id/settingsScroll"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:clipToPadding="false"
+            android:fillViewport="true">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:clipChildren="false"
+                android:clipToPadding="false"
+                android:orientation="vertical"
+                android:paddingStart="18dp"
+                android:paddingTop="4dp"
+                android:paddingEnd="18dp"
+                android:paddingBottom="20dp">
+
+                <!-- Provider selection card -->
+                <com.whs0730.desktranslate.ui.LiquidGlassLinearLayout
+                    android:id="@+id/providerCard"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="16dp">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/settings_provider_label"
+                        android:textColor="@color/glass_text_secondary"
+                        android:textSize="13sp"
+                        android:textStyle="bold" />
+
+                    <com.whs0730.desktranslate.ui.LiquidGlassLinearLayout
+                        android:id="@+id/providerMyMemoryRow"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal"
+                        android:padding="14dp">
+
+                        <View
+                            android:id="@+id/providerMyMemoryRadio"
+                            android:layout_width="18dp"
+                            android:layout_height="18dp"
+                            android:background="@drawable/bg_glass_radio" />
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="12dp"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="@string/provider_mymemory_title"
+                                android:textColor="@color/glass_text_primary"
+                                android:textSize="15sp"
+                                android:textStyle="bold" />
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="2dp"
+                                android:text="@string/provider_mymemory_desc"
+                                android:textColor="@color/glass_text_secondary"
+                                android:textSize="12sp" />
+                        </LinearLayout>
+                    </com.whs0730.desktranslate.ui.LiquidGlassLinearLayout>
+
+                    <com.whs0730.desktranslate.ui.LiquidGlassLinearLayout
+                        android:id="@+id/providerDeepSeekRow"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="10dp"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal"
+                        android:padding="14dp">
+
+                        <View
+                            android:id="@+id/providerDeepSeekRadio"
+                            android:layout_width="18dp"
+                            android:layout_height="18dp"
+                            android:background="@drawable/bg_glass_radio" />
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="12dp"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="@string/provider_deepseek_title"
+                                android:textColor="@color/glass_text_primary"
+                                android:textSize="15sp"
+                                android:textStyle="bold" />
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="2dp"
+                                android:text="@string/provider_deepseek_desc"
+                                android:textColor="@color/glass_text_secondary"
+                                android:textSize="12sp" />
+                        </LinearLayout>
+                    </com.whs0730.desktranslate.ui.LiquidGlassLinearLayout>
+                </com.whs0730.desktranslate.ui.LiquidGlassLinearLayout>
+
+                <!-- DeepSeek API profile management section (visible when DeepSeek selected) -->
+                <com.whs0730.desktranslate.ui.LiquidGlassLinearLayout
+                    android:id="@+id/deepseekSection"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="14dp"
+                    android:orientation="vertical"
+                    android:padding="16dp"
+                    android:visibility="gone"
+                    tools:visibility="visible">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <TextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="@string/api_configs_caption"
+                            android:textColor="@color/glass_text_secondary"
+                            android:textSize="13sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:id="@+id/addConfigButton"
+                            android:layout_width="wrap_content"
+                            android:layout_height="36dp"
+                            android:background="@drawable/bg_glass_ghost_button"
+                            android:clickable="true"
+                            android:focusable="true"
+                            android:gravity="center"
+                            android:paddingStart="10dp"
+                            android:paddingEnd="10dp"
+                            android:text="@string/api_config_add"
+                            android:textColor="@color/mint_accent_text"
+                            android:textSize="13.5sp"
+                            android:textStyle="bold" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:id="@+id/configListContainer"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:orientation="vertical" />
+
+                    <TextView
+                        android:id="@+id/configEmptyText"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:lineSpacingExtra="3dp"
+                        android:text="@string/api_config_empty"
+                        android:textColor="@color/glass_text_secondary"
+                        android:textSize="13sp" />
+
+                    <!-- Inline profile editor matching desktop #api-config-editor -->
+                    <com.whs0730.desktranslate.ui.LiquidGlassLinearLayout
+                        android:id="@+id/configEditorCard"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        android:orientation="vertical"
+                        android:padding="14dp"
+                        android:visibility="gone"
+                        tools:visibility="visible">
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal">
+
+                            <TextView
+                                android:id="@+id/editorTitle"
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:text="@string/api_config_editor_new"
+                                android:textColor="@color/glass_text_primary"
+                                android:textSize="14.5sp"
+                                android:textStyle="bold" />
+
+                            <TextView
+                                android:id="@+id/editorHint"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:textColor="@color/glass_text_placeholder"
+                                android:textSize="12sp"
+                                tools:text="保存后加入列表" />
+                        </LinearLayout>
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="12dp"
+                            android:text="@string/api_config_name_label"
+                            android:textColor="@color/glass_text_secondary"
+                            android:textSize="12.5sp" />
+
+                        <com.whs0730.desktranslate.ui.LiquidGlassFrameLayout
+                            android:id="@+id/configNameField"
+                            android:layout_width="match_parent"
+                            android:layout_height="44dp"
+                            android:layout_marginTop="6dp"
+                            android:paddingStart="12dp"
+                            android:paddingEnd="12dp">
+
+                            <androidx.appcompat.widget.AppCompatEditText
+                                android:id="@+id/configNameInput"
+                                android:layout_width="match_parent"
+                                android:layout_height="match_parent"
+                                android:background="@null"
+                                android:hint="@string/api_config_name_hint"
+                                android:importantForAutofill="no"
+                                android:inputType="text"
+                                android:maxLength="40"
+                                android:singleLine="true"
+                                android:textColor="@color/glass_text_primary"
+                                android:textColorHint="@color/glass_text_placeholder"
+                                android:textSize="14.5sp" />
+                        </com.whs0730.desktranslate.ui.LiquidGlassFrameLayout>
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="12dp"
+                            android:text="@string/api_config_model_label"
+                            android:textColor="@color/glass_text_secondary"
+                            android:textSize="12.5sp" />
+
+                        <com.whs0730.desktranslate.ui.LiquidGlassFrameLayout
+                            android:id="@+id/modelTrack"
+                            android:layout_width="match_parent"
+                            android:layout_height="42dp"
+                            android:layout_marginTop="6dp"
+                            android:clipChildren="false"
+                            android:clipToPadding="false"
+                            android:padding="3dp">
+
+                            <com.whs0730.desktranslate.ui.LiquidGlassPillView
+                                android:id="@+id/modelThumb"
+                                android:layout_width="0dp"
+                                android:layout_height="match_parent" />
+
+                            <LinearLayout
+                                android:layout_width="match_parent"
+                                android:layout_height="match_parent"
+                                android:orientation="horizontal">
+
+                                <TextView
+                                    android:id="@+id/modelFlashButton"
+                                    android:layout_width="0dp"
+                                    android:layout_height="match_parent"
+                                    android:layout_weight="1"
+                                    android:clickable="true"
+                                    android:focusable="true"
+                                    android:gravity="center"
+                                    android:text="DeepSeek Flash"
+                                    android:textColor="@color/mint_accent_text"
+                                    android:textSize="13sp"
+                                    android:textStyle="bold"
+                                    tools:ignore="HardcodedText" />
+
+                                <TextView
+                                    android:id="@+id/modelV4ProButton"
+                                    android:layout_width="0dp"
+                                    android:layout_height="match_parent"
+                                    android:layout_weight="1"
+                                    android:clickable="true"
+                                    android:focusable="true"
+                                    android:gravity="center"
+                                    android:text="DeepSeek V4 Pro"
+                                    android:textColor="@color/glass_text_secondary"
+                                    android:textSize="13sp"
+                                    tools:ignore="HardcodedText" />
+                            </LinearLayout>
+                        </com.whs0730.desktranslate.ui.LiquidGlassFrameLayout>
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="12dp"
+                            android:text="@string/api_config_key_label"
+                            android:textColor="@color/glass_text_secondary"
+                            android:textSize="12.5sp" />
+
+                        <com.whs0730.desktranslate.ui.LiquidGlassFrameLayout
+                            android:id="@+id/apiKeyField"
+                            android:layout_width="match_parent"
+                            android:layout_height="44dp"
+                            android:layout_marginTop="6dp"
+                            android:paddingStart="12dp"
+                            android:paddingEnd="12dp">
+
+                            <androidx.appcompat.widget.AppCompatEditText
+                                android:id="@+id/apiKeyInput"
+                                android:layout_width="match_parent"
+                                android:layout_height="match_parent"
+                                android:background="@null"
+                                android:fontFamily="monospace"
+                                android:hint="@string/api_config_key_hint_new"
+                                android:importantForAutofill="no"
+                                android:inputType="textPassword|textNoSuggestions"
+                                android:singleLine="true"
+                                android:textColor="@color/glass_text_primary"
+                                android:textColorHint="@color/glass_text_placeholder"
+                                android:textSize="14sp" />
+                        </com.whs0730.desktranslate.ui.LiquidGlassFrameLayout>
+
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="8dp"
+                            android:lineSpacingExtra="2dp"
+                            android:text="@string/api_config_key_help"
+                            android:textColor="@color/glass_text_placeholder"
+                            android:textSize="11.5sp" />
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="14dp"
+                            android:gravity="end|center_vertical"
+                            android:orientation="horizontal">
+
+                            <TextView
+                                android:id="@+id/editorCancelButton"
+                                android:layout_width="wrap_content"
+                                android:layout_height="36dp"
+                                android:background="@drawable/bg_glass_ghost_button"
+                                android:clickable="true"
+                                android:focusable="true"
+                                android:gravity="center"
+                                android:paddingStart="14dp"
+                                android:paddingEnd="14dp"
+                                android:text="@string/settings_cancel"
+                                android:textColor="@color/glass_text_secondary"
+                                android:textSize="13.5sp"
+                                android:textStyle="bold" />
+
+                            <com.whs0730.desktranslate.ui.LiquidGlassFrameLayout
+                                android:id="@+id/editorSaveButton"
+                                android:layout_width="wrap_content"
+                                android:layout_height="36dp"
+                                android:layout_marginStart="10dp"
+                                android:clickable="true"
+                                android:focusable="true"
+                                android:paddingStart="16dp"
+                                android:paddingEnd="16dp">
+
+                                <TextView
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:layout_gravity="center"
+                                    android:text="@string/api_config_save"
+                                    android:textColor="@color/mint_button_text"
+                                    android:textSize="13.5sp"
+                                    android:textStyle="bold" />
+                            </com.whs0730.desktranslate.ui.LiquidGlassFrameLayout>
+                        </LinearLayout>
+                    </com.whs0730.desktranslate.ui.LiquidGlassLinearLayout>
+                </com.whs0730.desktranslate.ui.LiquidGlassLinearLayout>
+            </LinearLayout>
+        </androidx.core.widget.NestedScrollView>
+
+        <!-- Bottom feedback & action bar anchored at bottom (stays below IME) -->
+        <LinearLayout
+            android:id="@+id/settingsFooter"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingStart="18dp"
+            android:paddingTop="6dp"
+            android:paddingEnd="18dp"
+            android:paddingBottom="16dp">
+
+            <TextView
+                android:id="@+id/settingsError"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="6dp"
+                android:accessibilityLiveRegion="polite"
+                android:textColor="@color/glass_error"
+                android:textSize="13sp"
+                android:textStyle="bold"
+                android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/settingsStatus"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="6dp"
+                android:accessibilityLiveRegion="polite"
+                android:textColor="@color/mint_accent_text"
+                android:textSize="13sp"
+                android:textStyle="bold"
+                android:visibility="gone" />
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:background="@color/glass_divider" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:gravity="end|center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/cancelSettingsButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="40dp"
+                    android:background="@drawable/bg_glass_ghost_button"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:gravity="center"
+                    android:paddingStart="16dp"
+                    android:paddingEnd="16dp"
+                    android:text="@string/settings_cancel"
+                    android:textColor="@color/glass_text_secondary"
+                    android:textSize="14sp"
+                    android:textStyle="bold" />
+
+                <com.whs0730.desktranslate.ui.LiquidGlassFrameLayout
+                    android:id="@+id/saveSettingsButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="42dp"
+                    android:layout_marginStart="12dp"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:paddingStart="22dp"
+                    android:paddingEnd="22dp">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_gravity="center"
+                        android:text="@string/settings_save"
+                        android:textColor="@color/mint_button_text"
+                        android:textSize="14.5sp"
+                        android:textStyle="bold" />
+                </com.whs0730.desktranslate.ui.LiquidGlassFrameLayout>
+            </LinearLayout>
+        </LinearLayout>
+    </LinearLayout>
+
+</merge>

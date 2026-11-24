@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginTop="7dp"
+    android:gravity="top"
+    android:orientation="horizontal">
+
+    <TextView
+        android:id="@+id/dictPos"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="1dp"
+        android:background="@drawable/bg_pos_badge"
+        android:fontFamily="monospace"
+        android:minWidth="38dp"
+        android:gravity="center"
+        android:paddingStart="6dp"
+        android:paddingTop="1dp"
+        android:paddingEnd="6dp"
+        android:paddingBottom="1dp"
+        android:textColor="@color/mint_accent_text"
+        android:textSize="12sp"
+        android:textStyle="bold"
+        tools:text="v." />
+
+    <TextView
+        android:id="@+id/dictMeanings"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="9dp"
+        android:layout_weight="1"
+        android:lineSpacingExtra="3dp"
+        android:textColor="@color/glass_text_primary"
+        android:textIsSelectable="true"
+        android:textSize="14.5sp"
+        tools:text="跑；奔跑；运行；经营" />
+</LinearLayout>

@@ -8,5 +8,11 @@ if (-not (Test-Path -LiteralPath $VenvPython)) {
 }
 
 $env:PYTHONPATH = Join-Path $ProjectRoot "src"
+Push-Location $ProjectRoot
+try {
+    & npm.cmd run build
+    if ($LASTEXITCODE -ne 0) { throw "界面构建失败" }
+}
+finally { Pop-Location }
 & $VenvPython (Join-Path $ProjectRoot "run.py")
 

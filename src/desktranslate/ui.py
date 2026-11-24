@@ -1,1010 +1,1063 @@
 from __future__ import annotations
 
-import queue
+import json
+import os
 import re
-import tkinter as tk
-from concurrent.futures import Future, ThreadPoolExecutor
-from dataclasses import dataclass
-from typing import Callable
+import secrets
+import threading
+import time
+from collections.abc import Callable
+from dataclasses import asdict, replace
+from math import ceil
+from pathlib import Path
 
-from PIL import Image, ImageTk
+import webview
 
-from .config import AppSettings, SettingsStore
-from .resources import app_icon_path
-from .translator import (
-    LanguageDirection,
-    SmartTranslator,
-    TranslationError,
-    TranslationNoResultError,
-    TranslationResult,
+from .config import MAX_API_CONFIGS, MAX_CONFIG_NAME, ApiConfig, SettingsStore, _percent
+from .credentials import CredentialStore
+from .deepseek import DEEPSEEK_MODELS, DeepSeekTranslator
+from .geometry import intersects_visible_area, sanitize_window_geometry, work_areas
+from .network import NETWORK_MODES
+from .resources import app_icon_path, frontend_path, subtitle_model_path
+from .subtitles import SubtitleService, list_loopback_devices
+from .translator import LanguageDirection, SmartTranslator, TranslationError, TranslationNoResultError
+from .windows import (
+    activate_window,
+    apply_window_material,
+    native_glass_supported,
+    show_window_no_activate,
+    start_native_move,
+    start_native_resize,
 )
-from .windows import apply_rounded_corners
 
 
-COLORS = {
-    "window": "#F4F4F5",
-    "surface": "#FAFAFA",
-    "surface_hover": "#EFEFF1",
-    "border": "#E4E4E7",
-    "text": "#18181B",
-    "muted": "#71717A",
-    "faint": "#A1A1AA",
-    "accent": "#202124",
-    "accent_hover": "#34363A",
-    "success": "#16A34A",
-    "danger": "#DC2626",
-    "white": "#FFFFFF",
-}
-
-WINDOW_WIDTH = 480
-WINDOW_HEIGHT = 320
-MIN_WINDOW_WIDTH = 400
-MIN_WINDOW_HEIGHT = 260
-RESIZE_BORDER_SIZE = 5
-RESIZE_CORNER_SIZE = 12
+WINDOW_WIDTH = 520
+WINDOW_HEIGHT = 420
+MIN_WINDOW_WIDTH = 320
+MIN_WINDOW_HEIGHT = 240
+MIN_SUBTITLE_HEIGHT = 100
 MAX_INPUT_CHARACTERS = 3_000
-SHORTCUT_DIALOG_MIN_WIDTH = 340
-SHORTCUT_DIALOG_MIN_HEIGHT = 174
-SHORTCUT_DIALOG_CORNER_SIZE = 18
 
 
-class HoverLabel(tk.Label):
-    def __init__(
-        self,
-        master: tk.Misc,
-        *,
-        text: str,
-        command: Callable[[], None],
-        background: str = COLORS["surface"],
-        hover_background: str = COLORS["surface_hover"],
-        foreground: str = COLORS["muted"],
-        font: tuple[str, int] | tuple[str, int, str] = ("Microsoft YaHei UI", 9),
-        padx: int = 7,
-        pady: int = 4,
-    ) -> None:
-        super().__init__(
-            master,
-            text=text,
-            bg=background,
-            fg=foreground,
-            font=font,
-            padx=padx,
-            pady=pady,
-            cursor="hand2",
-            borderwidth=0,
-        )
-        self._command = command
-        self._background = background
-        self._hover_background = hover_background
-        self.bind("<Enter>", lambda _event: self.configure(bg=self._hover_background))
-        self.bind("<Leave>", lambda _event: self.configure(bg=self._background))
-        self.bind("<Button-1>", lambda _event: self._command())
+_HTML_OPEN = re.compile(r"<html\b[^>]*>", re.IGNORECASE)
 
 
-class RoundButton(tk.Canvas):
-    def __init__(
-        self,
-        master: tk.Misc,
-        *,
-        text: str,
-        command: Callable[[], None],
-        size: int = 38,
-    ) -> None:
-        super().__init__(
-            master,
-            width=size,
-            height=size,
-            bg=COLORS["surface"],
-            highlightthickness=0,
-            borderwidth=0,
-            cursor="hand2",
-        )
-        self._size = size
-        self._text = text
-        self._command = command
-        self._busy = False
-        self._hovered = False
-        self.bind("<Enter>", self._on_enter)
-        self.bind("<Leave>", self._on_leave)
-        self.bind("<Button-1>", self._on_click)
-        self._draw()
+def glass_variables(settings) -> str:
+    """首帧就要正确的玻璃变量，口径与 app.ts 的 applySettings 保持一致。
 
-    def _draw(self) -> None:
-        self.delete("all")
-        fill = COLORS["accent_hover"] if self._hovered else COLORS["accent"]
-        if self._busy:
-            fill = "#A1A1AA"
-        pad = 2
-        self.create_oval(pad, pad, self._size - pad, self._size - pad, fill=fill, outline="")
-        self.create_text(
-            self._size / 2,
-            self._size / 2 - 1,
-            text="…" if self._busy else self._text,
-            fill=COLORS["white"],
-            font=("Segoe UI Symbol", 16, "bold"),
-        )
-
-    def _on_enter(self, _event: tk.Event) -> None:
-        self._hovered = True
-        self._draw()
-
-    def _on_leave(self, _event: tk.Event) -> None:
-        self._hovered = False
-        self._draw()
-
-    def _on_click(self, _event: tk.Event) -> None:
-        if not self._busy:
-            self._command()
-
-    def set_busy(self, busy: bool) -> None:
-        self._busy = busy
-        self.configure(cursor="arrow" if busy else "hand2")
-        self._draw()
+    两边各写一遍是刻意的：这里管「页面还没跑 JS 时的第一帧」，
+    applySettings 管「之后用户改设置」。改一处必须同步另一处。
+    """
+    frosted = settings.frosted_amount / 100
+    alpha = 0.12 + ((100 - settings.liquid_transparency) / 100) * 0.5
+    return ";".join((
+        f"--frost-blur:{round(frosted * 16, 3)}px",
+        f"--frost-tint:{round(0.3 + frosted * 0.35, 4)}",
+        f"--liquid-alpha:{round(alpha, 4)}",
+        f"--liquid-color:{settings.liquid_color}",
+    ))
 
 
-@dataclass(frozen=True)
-class _WorkerMessage:
-    request_id: int
-    future: Future[TranslationResult]
+def appearance_attributes(settings, *, native_glass: bool) -> str:
+    """渲染 <html> 上的外观属性，省掉启动时的一次 IPC 往返。"""
+    classes: list[str] = []
+    if native_glass:
+        classes.append("native-glass")
+    if settings.appearance == "liquid":
+        classes.append("appearance-liquid")
+    elif settings.appearance == "transparent":
+        classes.append("appearance-transparent")
+    attributes = f'style="{glass_variables(settings)}"'
+    if classes:
+        attributes = f'class="{" ".join(classes)}" ' + attributes
+    return attributes
 
 
-class ShortcutDialog(tk.Toplevel):
-    def __init__(
-        self,
-        master: "TranslationWindow",
-        current: str,
-        on_save: Callable[[str], tuple[bool, str]],
-    ) -> None:
-        super().__init__(master)
-        self.on_save = on_save
-        self._corner_resize_pointer_x = 0
-        self._corner_resize_pointer_y = 0
-        self._corner_resize_origin_x = 0
-        self._corner_resize_origin_y = 0
-        self._corner_resize_width = SHORTCUT_DIALOG_MIN_WIDTH
-        self._corner_resize_height = SHORTCUT_DIALOG_MIN_HEIGHT
-        self._corner_resize_edges = "se"
-        self._corner_resize_handles: list[tk.Frame] = []
-        self.title("设置召唤快捷键")
-        self.geometry(
-            f"{SHORTCUT_DIALOG_MIN_WIDTH}x{SHORTCUT_DIALOG_MIN_HEIGHT}"
-        )
-        self.resizable(True, True)
-        self.configure(bg=COLORS["surface"])
-        self.transient(master)
+def with_appearance(markup: str, attributes: str) -> str:
+    """把外观属性并进 <html> 标签，其余标记原样保留。"""
+    match = _HTML_OPEN.search(markup)
+    if match is None:
+        return markup
+    tag = match.group(0).replace("<html", f"<html {attributes}", 1)
+    return markup[: match.start()] + tag + markup[match.end():]
 
-        tk.Label(
-            self,
-            text="全局召唤快捷键",
-            bg=COLORS["surface"],
-            fg=COLORS["text"],
-            font=("Microsoft YaHei UI", 11, "bold"),
-        ).pack(anchor="w", padx=22, pady=(18, 4))
-        tk.Label(
-            self,
-            text="点击输入框后按组合键，或直接输入（例如 Ctrl+Alt+T）",
-            bg=COLORS["surface"],
-            fg=COLORS["muted"],
-            font=("Microsoft YaHei UI", 8),
-        ).pack(anchor="w", padx=22)
 
-        self.value = tk.StringVar(value=current)
-        entry = tk.Entry(
-            self,
-            textvariable=self.value,
-            bg=COLORS["white"],
-            fg=COLORS["text"],
-            insertbackground=COLORS["text"],
-            relief="solid",
-            borderwidth=1,
-            font=("Segoe UI", 11),
-        )
-        entry.pack(fill="x", padx=22, pady=(10, 4), ipady=5)
-        entry.bind("<KeyPress>", self._capture)
-        entry.select_range(0, "end")
-        entry.focus_set()
+def mask_secret(secret: str | None) -> str:
+    """只把密钥的首尾几个字符交给界面，明文始终留在后端进程内。"""
+    if not secret:
+        return ""
+    if len(secret) <= 4:
+        return "…" + secret[-2:]
+    if len(secret) <= 10:
+        return secret[:2] + "…" + secret[-2:]
+    return f"{secret[:3]}…{secret[-4:]}"
 
-        self.error_label = tk.Label(
-            self,
-            text="",
-            bg=COLORS["surface"],
-            fg=COLORS["danger"],
-            font=("Microsoft YaHei UI", 8),
-        )
-        self.error_label.pack(anchor="w", padx=22)
 
-        buttons = tk.Frame(self, bg=COLORS["surface"])
-        buttons.pack(side="bottom", fill="x", padx=18, pady=(4, 12))
-        HoverLabel(buttons, text="取消", command=self.destroy).pack(side="right")
-        HoverLabel(
-            buttons,
-            text="保存",
-            command=self._save,
-            background=COLORS["accent"],
-            hover_background=COLORS["accent_hover"],
-            foreground=COLORS["white"],
-            padx=13,
-        ).pack(side="right", padx=6)
+def _configs_of(host: object) -> list[ApiConfig]:
+    configs = getattr(host.settings, "api_configs", None)
+    return configs if isinstance(configs, list) else []
 
-        self.update_idletasks()
-        dialog_width = max(SHORTCUT_DIALOG_MIN_WIDTH, self.winfo_reqwidth())
-        dialog_height = max(SHORTCUT_DIALOG_MIN_HEIGHT, self.winfo_reqheight())
-        self.geometry(f"{dialog_width}x{dialog_height}")
-        self.minsize(dialog_width, dialog_height)
-        self._create_corner_resize_handles()
 
-        self.protocol("WM_DELETE_WINDOW", self.destroy)
-        self.grab_set()
+def _active_config(host: object) -> ApiConfig | None:
+    configs = _configs_of(host)
+    if not configs:
+        return None
+    active_id = getattr(host.settings, "active_api_config", "")
+    for config in configs:
+        if config.id == active_id:
+            return config
+    return configs[0]
 
-    def _create_corner_resize_handles(self) -> None:
-        specs = (
-            ("nw", "size_nw_se", {"x": 0, "y": 0}),
-            ("ne", "size_ne_sw", {"relx": 1, "x": -SHORTCUT_DIALOG_CORNER_SIZE, "y": 0}),
-            ("sw", "size_ne_sw", {"x": 0, "rely": 1, "y": -SHORTCUT_DIALOG_CORNER_SIZE}),
-            (
-                "se",
-                "size_nw_se",
+
+def _read_secret(host: object, config: ApiConfig | None) -> str | None:
+    if config is None:
+        return None
+    try:
+        return host.credentials.read(config.credential_target)
+    except OSError:
+        return None
+
+
+def _legacy_secret(host: object) -> str | None:
+    try:
+        return host.credentials.read()
+    except OSError:
+        return None
+
+
+class DesktopApi:
+    """仅向本地 TypeScript 界面开放桌面操作和翻译。"""
+
+    def __init__(self, host: TranslationWindow) -> None:
+        self._host = host
+
+    def get_settings(self) -> dict:
+        host = self._host
+        active = _active_config(host)
+        return {
+            "direction": host.direction.value,
+            "hotkey": host.settings.hotkey,
+            "hotkey_error": host.hotkey_error,
+            "initial_tab": getattr(host, "settings_tab", "translation"),
+            "native_glass": host.native_glass,
+            "network_mode": host.settings.network_mode,
+            "translation_provider": host.settings.translation_provider,
+            "deepseek_model": active.model if active is not None else host.settings.deepseek_model,
+            "has_api_key": self._has_api_key(),
+            "api_configs": self._config_payloads(),
+            "active_api_config": active.id if active is not None else "",
+            "close_action": host.settings.close_action,
+            "appearance": host.settings.appearance,
+            "frosted_amount": host.settings.frosted_amount,
+            "liquid_transparency": host.settings.liquid_transparency,
+            "transparent_transparency": host.settings.transparent_transparency,
+            "liquid_color": host.settings.liquid_color,
+            "settings_uid": getattr(getattr(host, "_settings_window", None), "uid", ""),
+        }
+
+    def _has_api_key(self) -> bool:
+        host = self._host
+        active = _active_config(host)
+        if active is not None:
+            return bool(_read_secret(host, active))
+        return bool(_legacy_secret(host))
+
+    def _config_payloads(self) -> list[dict]:
+        host = self._host
+        active = _active_config(host)
+        payloads: list[dict] = []
+        for config in _configs_of(host):
+            secret = _read_secret(host, config)
+            payloads.append(
                 {
-                    "relx": 1,
-                    "rely": 1,
-                    "x": -SHORTCUT_DIALOG_CORNER_SIZE,
-                    "y": -SHORTCUT_DIALOG_CORNER_SIZE,
-                },
-            ),
-        )
-        for edges, cursor, placement in specs:
-            handle = tk.Frame(
-                self,
-                bg=COLORS["surface"],
-                cursor=cursor,
-                width=SHORTCUT_DIALOG_CORNER_SIZE,
-                height=SHORTCUT_DIALOG_CORNER_SIZE,
+                    "id": config.id,
+                    "name": config.name,
+                    "model": config.model,
+                    "has_key": bool(secret),
+                    # 只下发掩码，完整密钥不进入界面层。
+                    "key_preview": mask_secret(secret),
+                    "active": active is config,
+                }
             )
-            handle.place(
-                width=SHORTCUT_DIALOG_CORNER_SIZE,
-                height=SHORTCUT_DIALOG_CORNER_SIZE,
-                **placement,
-            )
-            handle.bind(
-                "<ButtonPress-1>",
-                lambda event, active_edges=edges: self._start_corner_resize(
-                    event, active_edges
-                ),
-            )
-            handle.bind("<B1-Motion>", self._resize_from_corner)
-            handle.lift()
-            self._corner_resize_handles.append(handle)
+        return payloads
 
-    def _start_corner_resize(self, event: tk.Event, edges: str) -> None:
-        self._corner_resize_pointer_x = event.x_root
-        self._corner_resize_pointer_y = event.y_root
-        self._corner_resize_origin_x = self.winfo_x()
-        self._corner_resize_origin_y = self.winfo_y()
-        self._corner_resize_width = self.winfo_width()
-        self._corner_resize_height = self.winfo_height()
-        self._corner_resize_edges = edges
+    def _configs_response(self) -> dict:
+        active = _active_config(self._host)
+        return {
+            "configs": self._config_payloads(),
+            "active_id": active.id if active is not None else "",
+            "has_api_key": self._has_api_key(),
+        }
 
-    def _resize_from_corner(self, event: tk.Event) -> None:
-        delta_x = event.x_root - self._corner_resize_pointer_x
-        delta_y = event.y_root - self._corner_resize_pointer_y
-        min_width, min_height = self.minsize()
-        x = self._corner_resize_origin_x
-        y = self._corner_resize_origin_y
-        width = self._corner_resize_width
-        height = self._corner_resize_height
-
-        if "e" in self._corner_resize_edges:
-            width = max(min_width, self._corner_resize_width + delta_x)
-        if "s" in self._corner_resize_edges:
-            height = max(min_height, self._corner_resize_height + delta_y)
-        if "w" in self._corner_resize_edges:
-            width = max(min_width, self._corner_resize_width - delta_x)
-            x = self._corner_resize_origin_x + self._corner_resize_width - width
-        if "n" in self._corner_resize_edges:
-            height = max(min_height, self._corner_resize_height - delta_y)
-            y = self._corner_resize_origin_y + self._corner_resize_height - height
-
-        self.geometry(f"{width}x{height}{x:+d}{y:+d}")
-
-    def _capture(self, event: tk.Event) -> str:
-        if event.keysym in {
-            "Control_L", "Control_R", "Alt_L", "Alt_R",
-            "Shift_L", "Shift_R",
-        }:
-            return "break"
-        key = event.keysym.upper()
-        if not (
-            (len(key) == 1 and key in "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
-            or (key.startswith("F") and key[1:].isdigit())
-        ):
-            return "break"
-
-        modifiers: list[str] = []
-        if event.state & 0x0004:
-            modifiers.append("Ctrl")
-        if event.state & 0x0008 or event.state & 0x20000:
-            modifiers.append("Alt")
-        if event.state & 0x0001:
-            modifiers.append("Shift")
-        if modifiers:
-            self.value.set("+".join([*modifiers, key]))
-            self.error_label.configure(text="")
-        return "break"
-
-    def _save(self) -> None:
-        success, message = self.on_save(self.value.get())
-        if success:
-            self.destroy()
+    def save_api_config(self, config_id: str, name: str, model: str, api_key: str) -> dict:
+        if not isinstance(config_id, str) or not isinstance(api_key, str):
+            raise ValueError("配置设置格式不正确")
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("请填写配置名称")
+        name = name.strip()
+        if len(name) > MAX_CONFIG_NAME:
+            raise ValueError(f"配置名称请控制在 {MAX_CONFIG_NAME} 字以内")
+        if model not in DEEPSEEK_MODELS:
+            raise ValueError("请选择支持的 DeepSeek 模型")
+        key = api_key.strip()
+        if key and (len(key) > 512 or any(not 33 <= ord(char) <= 126 for char in key)):
+            raise ValueError("API Key 应为不含空格和换行的可见英文字符")
+        host = self._host
+        configs = _configs_of(host)
+        config = next((item for item in configs if item.id == config_id.strip()), None)
+        if config is None:
+            if len(configs) >= MAX_API_CONFIGS:
+                raise ValueError(f"最多保存 {MAX_API_CONFIGS} 条 API 配置")
+            config = ApiConfig(id=secrets.token_hex(4), name=name, model=model)
+            configs.append(config)
         else:
-            self.error_label.configure(text=message)
+            config.name = name
+            config.model = model
+        try:
+            if key:
+                host.credentials.save(key, config.credential_target)
+        except OSError as exc:
+            raise ValueError("无法保存 Windows 凭据，请稍后重试") from exc
+        if not host.settings.active_api_config or host.settings.active_api_config not in {
+            item.id for item in configs
+        }:
+            host.settings.active_api_config = config.id
+        if config.id == host.settings.active_api_config:
+            host.settings.deepseek_model = config.model
+            host.deepseek.model = config.model
+        host.save_settings()
+        return self._configs_response()
 
+    def activate_api_config(self, config_id: str) -> dict:
+        if not isinstance(config_id, str):
+            raise ValueError("配置设置格式不正确")
+        host = self._host
+        config = next((item for item in _configs_of(host) if item.id == config_id.strip()), None)
+        if config is None:
+            raise ValueError("配置不存在或已被删除")
+        host.settings.active_api_config = config.id
+        host.settings.deepseek_model = config.model
+        host.deepseek.model = config.model
+        host.save_settings()
+        return self._configs_response()
 
-class TranslationWindow(tk.Tk):
-    def __init__(
-        self,
-        translator: SmartTranslator,
-        settings_store: SettingsStore,
+    def delete_api_config(self, config_id: str) -> dict:
+        if not isinstance(config_id, str):
+            raise ValueError("配置设置格式不正确")
+        host = self._host
+        configs = _configs_of(host)
+        config = next((item for item in configs if item.id == config_id.strip()), None)
+        if config is None:
+            raise ValueError("配置不存在或已被删除")
+        if len(configs) <= 1:
+            raise ValueError("至少保留一条配置；如需停用 DeepSeek，请先切换到 MyMemory")
+        try:
+            host.credentials.delete(config.credential_target)
+        except OSError as exc:
+            raise ValueError("无法删除 Windows 凭据，请稍后重试") from exc
+        configs.remove(config)
+        if host.settings.active_api_config == config.id:
+            host.settings.active_api_config = configs[0].id
+            host.settings.deepseek_model = configs[0].model
+            host.deepseek.model = configs[0].model
+        host.save_settings()
+        return self._configs_response()
+
+    def translate(self, text: str, direction: str) -> dict:
+        if not isinstance(text, str) or not text.strip():
+            raise ValueError("请先输入要翻译的内容")
+        text = text.strip()
+        if len(text) > MAX_INPUT_CHARACTERS:
+            raise ValueError(f"请将内容控制在 {MAX_INPUT_CHARACTERS} 字以内")
+        selected = LanguageDirection(direction)
+        # pywebview 在工作线程执行 API，网络请求不会占用 WebView2 的界面线程。
+        try:
+            host = self._host
+            if host.settings.translation_provider == "deepseek":
+                result = host.deepseek.translate(text, selected)
+            else:
+                result = host.translator.translate(text, selected)
+        except TranslationNoResultError as exc:
+            return {"ok": False, "text": f"未找到译文\n{exc}", "message": "请检查英文拼写或换一种表达"}
+        except TranslationError as exc:
+            return {"ok": False, "text": f"翻译失败\n{exc}", "message": "请检查网络后重试"}
+        return {"ok": True, **asdict(result)}
+
+    def set_direction(self, direction: str) -> None:
+        host = self._host
+        host.direction = LanguageDirection(direction)
+        host.save_settings()
+
+    def set_network_mode(self, mode: str) -> None:
+        if not isinstance(mode, str) or mode not in NETWORK_MODES:
+            raise ValueError("请选择自动、系统代理或直连")
+        host = self._host
+        host.translator.network.mode = mode
+        host.settings.network_mode = mode
+        host.save_settings()
+
+    def set_translation_settings(self, provider: str, model: str, api_key: str, clear_key: bool) -> dict:
+        if not isinstance(provider, str) or provider not in {"mymemory", "deepseek"}:
+            raise ValueError("请选择 MyMemory 或 DeepSeek")
+        if not isinstance(model, str) or model not in DEEPSEEK_MODELS:
+            raise ValueError("请选择支持的 DeepSeek 模型")
+        if not isinstance(api_key, str) or not isinstance(clear_key, bool):
+            raise ValueError("密钥设置格式不正确")
+        key = api_key.strip()
+        if key and (len(key) > 512 or any(not 33 <= ord(char) <= 126 for char in key)):
+            raise ValueError("API Key 应为不含空格和换行的可见英文字符")
+        host = self._host
+        config = _active_config(host)
+        existing = _read_secret(host, config) if config is not None else _legacy_secret(host)
+        if provider == "deepseek" and (clear_key or not (key or existing)):
+            raise ValueError("使用 DeepSeek 前请填写 API Key")
+        if provider == "deepseek" and config is None:
+            # 旧版本把密钥写在固定目标里；首次启用时直接沿用它，避免复制或丢失。
+            config = ApiConfig(
+                id=secrets.token_hex(4),
+                name="默认配置",
+                model=model,
+                target=CredentialStore.TARGET if existing and not key else "",
+            )
+            _configs_of(host).append(config)
+            host.settings.active_api_config = config.id
+        target = config.credential_target if config is not None else None
+        try:
+            if clear_key:
+                host.credentials.delete(target)
+            elif key:
+                host.credentials.save(key, target)
+        except OSError as exc:
+            raise ValueError("无法保存 Windows 凭据，请稍后重试") from exc
+        if config is not None:
+            config.model = model
+        host.settings.translation_provider = provider
+        host.settings.deepseek_model = model
+        host.deepseek.model = model
+        host.save_settings()
+        return {"has_api_key": self._has_api_key()}
+
+    def read_clipboard(self) -> str:
+        from System.Runtime.InteropServices import ExternalException
+        from System.Windows.Forms import Clipboard
+
+        try:
+            return str(self._host._on_ui(Clipboard.GetText))
+        except ExternalException as exc:
+            raise ValueError("暂时无法读取剪贴板，请稍后重试") from exc
+
+    def copy_result(self, text: str) -> None:
+        from System.Runtime.InteropServices import ExternalException
+        from System.Windows.Forms import Clipboard
+
+        if not isinstance(text, str) or not text:
+            raise ValueError("当前没有可复制的结果")
+        try:
+            self._host._on_ui(lambda: Clipboard.SetText(text))
+        except ExternalException as exc:
+            raise ValueError("暂时无法写入剪贴板，请稍后重试") from exc
+
+    def set_hotkey(self, shortcut: str) -> dict:
+        if self._host.on_hotkey_change is None:
+            return {"ok": False, "message": "快捷键服务尚未启动"}
+        if not isinstance(shortcut, str):
+            raise ValueError("快捷键必须是文本")
+        success, message = self._host.on_hotkey_change(shortcut)
+        return {"ok": success, "message": message}
+
+    def hide(self) -> None:
+        self._host.hide()
+
+    def minimize(self) -> None:
+        self._host.minimize()
+
+    def set_close_action(self, action: str) -> None:
+        """记录「点击关闭按钮」的行为：tray 隐藏到托盘，exit 直接退出应用。"""
+        if action not in {"tray", "exit"}:
+            raise ValueError("关闭行为只能是 tray 或 exit")
+        host = self._host
+        host.settings.close_action = action
+        host.save_settings()
+
+    def quit(self) -> None:
+        """按设置直接退出应用；界面在关闭行为为 exit 时调用。"""
+        self._host.request_exit()
+
+    def set_appearance(self, appearance: str) -> None:
+        """切换外观：frosted 磨砂玻璃，liquid 液态玻璃；两处窗口都立即生效。"""
+        if appearance not in {"frosted", "liquid", "transparent"}:
+            raise ValueError("外观无效")
+        host = self._host
+        host.settings.appearance = appearance
+        host.save_settings()
+        self._push_appearance()
+        host.refresh_glass()
+
+    def set_appearance_options(
+        self, frosted_amount: int | None = None, liquid_transparency: int | None = None,
+        save: bool = True, liquid_color: str | None = None, transparent_transparency: int | None = None,
     ) -> None:
-        super().__init__(className="DeskTranslate")
+        """调整磨砂度与液态玻璃透明度（0-100），只保存提供的字段。"""
+        host = self._host
+        if frosted_amount is not None:
+            host.settings.frosted_amount = _percent(frosted_amount, host.settings.frosted_amount)
+        if liquid_transparency is not None:
+            host.settings.liquid_transparency = _percent(
+                liquid_transparency, host.settings.liquid_transparency
+            )
+        if transparent_transparency is not None:
+            host.settings.transparent_transparency = _percent(
+                transparent_transparency, host.settings.transparent_transparency
+            )
+        if liquid_color is not None:
+            if not isinstance(liquid_color, str) or not re.fullmatch(r"#[0-9a-fA-F]{6}", liquid_color):
+                raise ValueError("玻璃颜色格式无效")
+            host.settings.liquid_color = liquid_color.lower()
+        self._push_appearance()
+        host.refresh_glass()
+        if save:
+            host.save_settings()
+
+    def preview_appearance(
+        self, uid: str, appearance: str, frosted_amount: int, liquid_transparency: int,
+        transparent_transparency: int, color: str,
+    ) -> None:
+        if appearance not in {"frosted", "liquid", "transparent"}:
+            raise ValueError("外观无效")
+        if not isinstance(color, str) or not re.fullmatch(r"#[0-9a-fA-F]{6}", color):
+            raise ValueError("玻璃颜色格式无效")
+        host = self._host
+        child = host._settings_window
+        if child is None or child.uid != uid:
+            return
+        preview = replace(
+            host.settings, appearance=appearance,
+            frosted_amount=_percent(frosted_amount, host.settings.frosted_amount),
+            liquid_transparency=_percent(liquid_transparency, host.settings.liquid_transparency),
+            transparent_transparency=_percent(transparent_transparency, host.settings.transparent_transparency),
+            liquid_color=color.lower(),
+        )
+
+        def apply_preview() -> None:
+            if host._settings_window is child and not child.native.IsDisposed:
+                for form in (host.window.native, child.native):
+                    apply_window_material(form, host.glass_tint_alpha(preview),
+                                          appearance == "liquid", host.window_opacity(preview),
+                                          appearance == "transparent")
+
+        if host._settings_window is child:
+            settings = self.get_settings()
+            settings.update(appearance=preview.appearance, frosted_amount=preview.frosted_amount,
+                            liquid_transparency=preview.liquid_transparency,
+                            transparent_transparency=preview.transparent_transparency,
+                            liquid_color=preview.liquid_color)
+            host.window.evaluate_js(f"window.desktranslate.applySettings({json.dumps(settings)}, false)")
+        # 材质改动会牵动 DWM 的客户区，等这次桥调用（含上面那次跨窗 evaluate_js）退出去再动。
+        host._on_ui_later(apply_preview)
+
+    def discard_appearance_preview(self, uid: str) -> None:
+        host = self._host
+        child = host._settings_window
+        if child is None or child.uid != uid:
+            return
+        self._push_appearance()
+        host.refresh_glass()
+
+    def save_appearance(self, appearance: str, frosted: int, liquid: int, color: str, transparent: int) -> None:
+        if appearance not in {"frosted", "liquid", "transparent"}:
+            raise ValueError("外观无效")
+        if not isinstance(color, str) or not re.fullmatch(r"#[0-9a-fA-F]{6}", color):
+            raise ValueError("玻璃颜色格式无效")
+        settings = self._host.settings
+        settings.appearance = appearance
+        settings.frosted_amount = _percent(frosted, settings.frosted_amount)
+        settings.liquid_transparency = _percent(liquid, settings.liquid_transparency)
+        settings.transparent_transparency = _percent(transparent, settings.transparent_transparency)
+        settings.liquid_color = color.lower()
+        self._host.save_settings()
+        self._push_appearance()
+        self._host.refresh_glass()
+
+    def _push_appearance(self, include_settings_window: bool = False) -> None:
+        """把外观同步到主窗。设置窗是这类控件的源头，默认不回推，避免覆盖拖动中的滑杆。"""
+        host = self._host
+        settings = host.settings
+        host.window.evaluate_js(
+            f"window.desktranslate.applySettings({json.dumps(self.get_settings())}, false)"
+        )
+        child = getattr(host, "_settings_window", None)
+        if include_settings_window and child is not None:
+            child.evaluate_js(
+                "window.desktranslateSettings?.applyAppearance("
+                f"{json.dumps(settings.appearance)}, "
+                f"{settings.frosted_amount}, {settings.liquid_transparency}, {json.dumps(settings.liquid_color)}, {settings.transparent_transparency})"
+            )
+
+    def open_settings(self, tab: str = "translation") -> None:
+        self._host.open_settings(tab if tab in {"translation", "hotkey", "window", "appearance"} else "translation")
+
+    def close_settings(self) -> None:
+        self._host.close_settings()
+
+    def settings_saved(self) -> None:
+        """把保存后的设置推给主窗。设置窗保持打开，由界面自己提示保存结果。"""
+        host = self._host
+        settings = json.dumps(self.get_settings())
+        host.window.evaluate_js(f"window.desktranslate.applySettings({settings}, true)")
+
+    def set_on_top(self, on_top: bool) -> None:
+        if not isinstance(on_top, bool):
+            raise ValueError("置顶状态必须是布尔值")
+        self._host._on_ui(lambda: setattr(self._host.window.native, "TopMost", on_top))
+
+    def start_resize(self, edge: str) -> None:
+        start_native_resize(self._host.window.native, edge)
+
+    def set_window_mode(self, mode: str) -> None:
+        if mode not in {"translation", "subtitles"}:
+            raise ValueError("窗口模式无效")
+        height = MIN_SUBTITLE_HEIGHT if mode == "subtitles" else MIN_WINDOW_HEIGHT
+        self._host._set_minimum_content_size(self._host.window, MIN_WINDOW_WIDTH, height)
+
+    def subtitle_devices(self) -> list[dict]:
+        try:
+            return list_loopback_devices()
+        except (ImportError, OSError, LookupError) as exc:
+            raise ValueError("无法获取系统播放设备，请检查音频设备") from exc
+
+    def start_subtitles(self, device_id: int) -> int:
+        return self._host.subtitles.start(device_id)
+
+    def activate_subtitles(self, session: int) -> None:
+        self._host.subtitles.activate(session)
+
+    def stop_subtitles(self, session: int | None = None) -> None:
+        self._host.subtitles.stop(session)
+
+    def clear_subtitles(self, session: int) -> int:
+        return self._host.subtitles.clear(session)
+
+    def start_drag(self) -> None:
+        start_native_move(self._host.window.native)
+
+    def start_settings_drag(self) -> None:
+        """设置窗没有系统标题栏，拖动由页面上的标题条接管。"""
+        child = getattr(self._host, "_settings_window", None)
+        if child is not None:
+            start_native_move(child.native)
+
+    def start_settings_resize(self, edge: str) -> None:
+        child = getattr(self._host, "_settings_window", None)
+        if child is not None:
+            start_native_resize(child.native, edge)
+
+    def remember_settings_size(self, width: float, height: float) -> None:
+        """页面自报内容视口尺寸，下次开窗照这个摆。
+
+        页面的 innerWidth/innerHeight 才是用户看到的尺寸；WinForms 的 Size 还混着 DPI 和
+        边框，换算一次就会在「记住」和「摆回去」之间漂移。
+        """
+        if not width or not height or width <= 0 or height <= 0:
+            return
+        if not self._host._settings_fitted:
+            # 就绪前的 resize 是创建/摆位过程里的中间态，记下来下次开窗会越开越小。
+            return
+        self._host._settings_size = (max(360, round(width)), max(320, round(height)))
+
+    def fit_settings_window(self) -> dict[str, int] | None:
+        """页面就绪后按记住的内容尺寸把设置窗摆准，返回要摆到多少。
+
+        创建窗口时 pywebview 先按带边框摆、再换成无边框，WinForms 换样式会保留客户区，
+        结果比要求的小一圈；补多少和当时的边框状态有关，算不准，只能在页面起来后实测再摆。
+
+        摆位必须晚一拍、并且不能等它摆完：此刻页面的 JS 正停在这个调用的 await 上，
+        当场改窗口尺寸会把这条桥上还没取走的消息堵死，之后所有桥调用都不再返回。
+        所以这里只排一个延后任务，把目标尺寸交给页面自己去等。
+        """
+        host = self._host
+        child = host._settings_window
+        if child is None:
+            return None
+        width, height = host._settings_size
+        host._set_content_size(child, width, height, delay=0.05)
+        return {"width": width, "height": height}
+
+    def show_settings_window(self) -> None:
+        host = self._host
+        child = host._settings_window
+        if child is None:
+            return
+
+        def show() -> None:
+            if host._settings_window is child:
+                child.native.Opacity = host.window_opacity()
+                child.focus = True
+                activate_window(child.native)
+                host._settings_ready = True
+
+        host._on_ui_later(show)
+
+
+class TranslationWindow:
+    def __init__(self, translator: SmartTranslator, settings_store: SettingsStore) -> None:
         self.translator = translator
         self.settings_store = settings_store
         self.settings = settings_store.load()
-        self.direction = self._load_direction(self.settings.direction)
-        self.executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="translate")
-        self.worker_messages: queue.Queue[_WorkerMessage] = queue.Queue()
-        self.request_id = 0
+        self.translator.network.mode = self.settings.network_mode
+        self.credentials = CredentialStore()
+        self._ensure_api_configs()
+        self.deepseek = DeepSeekTranslator(self.active_api_key, self.translator.network)
+        self.deepseek.model = self.active_api_model()
+        try:
+            self.direction = LanguageDirection(self.settings.direction)
+        except ValueError:
+            self.direction = LanguageDirection.AUTO
         self.is_exiting = False
         self.is_visible = True
+        self.is_minimized = False
+        self.native_glass = False
+        self.hotkey_error: str | None = None
+        self.settings_tab = "translation"
         self.on_visibility_changed: Callable[[bool], None] | None = None
         self.on_hotkey_change: Callable[[str], tuple[bool, str]] | None = None
-        self._shortcut_dialog: ShortcutDialog | None = None
-        self._drag_x = 0
-        self._drag_y = 0
-        self._resize_pointer_x = 0
-        self._resize_pointer_y = 0
-        self._resize_origin_x = 0
-        self._resize_origin_y = 0
-        self._resize_width = WINDOW_WIDTH
-        self._resize_height = WINDOW_HEIGHT
-        self._resize_edges = "se"
-        self._resize_handles: list[tk.Frame] = []
-        self._last_rounded_size: tuple[int, int] | None = None
-
-        self.title("DeskTranslate")
-        self.geometry(f"{WINDOW_WIDTH}x{WINDOW_HEIGHT}")
-        self.minsize(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
-        self.configure(bg=COLORS["window"])
-        self.overrideredirect(True)
-        self.protocol("WM_DELETE_WINDOW", self.hide)
-        self._apply_window_icon(self)
-
-        self._build_ui()
-        self._restore_position()
-        self.update_idletasks()
-        apply_rounded_corners(self)
-        self.bind("<Configure>", self._on_configure)
-        self.bind("<Escape>", lambda _event: self.hide())
-        self.after(80, self._poll_worker_messages)
-        self.after(80, self._focus_input)
-
-    @staticmethod
-    def _load_direction(value: str) -> LanguageDirection:
-        lookup = {
-            "auto": LanguageDirection.AUTO,
-            "en_to_zh": LanguageDirection.EN_TO_ZH,
-            "zh_to_en": LanguageDirection.ZH_TO_EN,
-        }
-        return lookup.get(value, LanguageDirection.AUTO)
-
-    def _build_ui(self) -> None:
-        outer = tk.Frame(
-            self,
-            bg=COLORS["surface"],
-            highlightbackground=COLORS["border"],
-            highlightthickness=1,
+        self.stopped = threading.Event()
+        self._settings_lock = threading.Lock()
+        self._settings_window_lock = threading.Lock()
+        self._settings_window: webview.Window | None = None
+        self._allow_settings_close = False
+        self._settings_size = (460, 600)
+        # 设置窗「客户区像素 / 页面视口」的比值，由 ready() 现算，供关闭时兜底换算。
+        self._settings_content_scale = 0.0
+        # 页面就绪后会把窗口摆到记住的尺寸；在那之前页面报上来的尺寸是创建时的残值，不能记。
+        self._settings_fitted = False
+        self._settings_ready = False
+        self.api = DesktopApi(self)
+        window_x, window_y, window_width, window_height = sanitize_window_geometry(
+            self.settings.window_x,
+            self.settings.window_y,
+            self.settings.window_width,
+            self.settings.window_height,
+            work_areas(),
+            min_width=MIN_WINDOW_WIDTH,
+            min_height=MIN_WINDOW_HEIGHT,
+            default_width=WINDOW_WIDTH,
+            default_height=WINDOW_HEIGHT,
         )
-        outer.pack(fill="both", expand=True)
-        outer.grid_columnconfigure(0, weight=1)
-        outer.grid_rowconfigure(6, weight=1, minsize=24)
+        # 修正后的几何立刻写回内存，后续 hide/退出保存时不会再把屏幕外坐标落盘。
+        self.settings.window_x = window_x
+        self.settings.window_y = window_y
+        self.settings.window_width = window_width
+        self.settings.window_height = window_height
+        self.window = webview.create_window(
+            "DeskTranslate",
+            html=self._markup(),
+            js_api=self.api,
+            width=window_width,
+            height=window_height,
+            x=window_x,
+            y=window_y,
+            min_size=(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT),
+            frameless=True,
+            easy_drag=False,
+            resizable=True,
+            background_color="#626b6e",
+            text_select=True,
+            zoomable=False,
+        )
+        self.subtitles = SubtitleService(subtitle_model_path(), self._translate_subtitle, self._emit_subtitle)
+        self.window.events.before_show += self._prepare_native_window
+        self.window.events.loaded += lambda: self._set_minimum_content_size(self.window, MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
+        self.window.events.closing += self._on_closing
+        self.window.events.closed += self._on_closed
+        self.window.events.resized += self._remember_size
+        self.window.events.moved += self._remember_position
 
-        self.header = tk.Frame(outer, bg=COLORS["surface"], height=40)
-        self.header.grid(row=0, column=0, sticky="ew", padx=10, pady=(6, 0))
-        self.header.pack_propagate(False)
-        for widget in (self.header,):
-            widget.bind("<ButtonPress-1>", self._start_drag)
-            widget.bind("<B1-Motion>", self._drag_window)
+    def _translate_subtitle(self, text: str, direction: LanguageDirection, timeout: float):
+        translator = self.deepseek if self.settings.translation_provider == "deepseek" else self.translator.primary
+        return translator.translate(text, direction, timeout=timeout)
 
-        self._header_icon: ImageTk.PhotoImage | None = None
-        icon_path = app_icon_path()
-        if icon_path is not None:
-            try:
-                with Image.open(icon_path) as source:
-                    image = source.convert("RGBA").resize(
-                        (24, 24),
-                        Image.Resampling.LANCZOS,
-                    )
-                self._header_icon = ImageTk.PhotoImage(image)
-            except OSError:
-                self._header_icon = None
+    def _emit_subtitle(self, event: dict) -> None:
+        if not self.is_exiting and self.window.events.loaded.is_set():
+            self.window.evaluate_js(f"window.desktranslate.updateSubtitle({json.dumps(event)})")
 
-        logo_options: dict[str, object] = {
-            "bg": COLORS["surface"],
-            "font": ("Microsoft YaHei UI", 11, "bold"),
-        }
-        if self._header_icon is not None:
-            logo_options["image"] = self._header_icon
-        else:
-            logo_options.update(
-                text="译",
-                bg=COLORS["accent"],
-                fg=COLORS["white"],
-                width=2,
-                height=1,
-            )
-        logo = tk.Label(self.header, **logo_options)
-        logo.pack(side="left", padx=(2, 8), pady=4)
+    def _ensure_api_configs(self) -> None:
+        """把旧版本的单个凭据迁移成一条可管理的配置，不复制密钥本身。
 
-        title = tk.Label(
-            self.header,
-            text="DeskTranslate",
-            bg=COLORS["surface"],
-            fg=COLORS["text"],
-            font=("Segoe UI", 10, "bold"),
-        )
-        title.pack(side="left")
-        title.bind("<ButtonPress-1>", self._start_drag)
-        title.bind("<B1-Motion>", self._drag_window)
-
-        self.provider_label = tk.Label(
-            self.header,
-            text="●  在线",
-            bg=COLORS["surface"],
-            fg=COLORS["success"],
-            font=("Microsoft YaHei UI", 8),
-        )
-        self.provider_label.pack(side="left", padx=8)
-
-        close = HoverLabel(
-            self.header,
-            text="×",
-            command=self.hide,
-            font=("Segoe UI", 14),
-            padx=9,
-            pady=2,
-        )
-        close.pack(side="right", padx=(2, 0), pady=3)
-        minimize = HoverLabel(
-            self.header,
-            text="—",
-            command=self.hide,
-            font=("Segoe UI", 11),
-            padx=9,
-            pady=3,
-        )
-        minimize.pack(side="right", pady=3)
-        shortcut = HoverLabel(
-            self.header,
-            text="快捷键",
-            command=self.open_shortcut_settings,
-            font=("Microsoft YaHei UI", 8),
-            padx=7,
-            pady=3,
-        )
-        shortcut.pack(side="right", padx=2, pady=3)
-
-        direction_row = tk.Frame(outer, bg=COLORS["surface"])
-        direction_row.grid(row=1, column=0, sticky="ew", padx=20, pady=(1, 0))
-        self.direction_button = HoverLabel(
-            direction_row,
-            text="自动检测",
-            command=self._show_direction_menu,
-            background=COLORS["surface_hover"],
-            hover_background="#E4E4E7",
-            foreground=COLORS["text"],
-            font=("Microsoft YaHei UI", 9),
-            padx=9,
-            pady=3,
-        )
-        self.direction_button.pack(side="left")
-        swap = HoverLabel(
-            direction_row,
-            text="⇄",
-            command=self._swap_direction,
-            foreground=COLORS["muted"],
-            font=("Segoe UI Symbol", 13),
-            padx=8,
-            pady=2,
-        )
-        swap.pack(side="left", padx=3)
-        self.direction_menu = tk.Menu(
-            self,
-            tearoff=False,
-            font=("Microsoft YaHei UI", 9),
-            bg=COLORS["white"],
-            fg=COLORS["text"],
-            activebackground=COLORS["surface_hover"],
-            activeforeground=COLORS["text"],
-            relief="flat",
-            borderwidth=1,
-        )
-        self.direction_menu.add_command(
-            label="自动检测",
-            command=lambda: self._set_direction(LanguageDirection.AUTO),
-        )
-        self.direction_menu.add_command(
-            label="英文 → 中文",
-            command=lambda: self._set_direction(LanguageDirection.EN_TO_ZH),
-        )
-        self.direction_menu.add_command(
-            label="中文 → 英文",
-            command=lambda: self._set_direction(LanguageDirection.ZH_TO_EN),
-        )
-
-        input_frame = tk.Frame(outer, bg=COLORS["surface"])
-        input_frame.grid(row=2, column=0, sticky="ew", padx=20)
-        self.input_text = tk.Text(
-            input_frame,
-            height=3,
-            wrap="word",
-            bg=COLORS["surface"],
-            fg=COLORS["text"],
-            insertbackground=COLORS["text"],
-            selectbackground="#D4D4D8",
-            selectforeground=COLORS["text"],
-            relief="flat",
-            borderwidth=0,
-            highlightthickness=0,
-            font=("Microsoft YaHei UI", 11),
-            undo=True,
-            padx=1,
-            pady=4,
-        )
-        self.input_text.pack(fill="x")
-        self.input_text.bind("<<Modified>>", self._on_input_modified)
-        self.input_text.bind("<Return>", self._translate_from_enter)
-        self.input_text.bind("<KP_Enter>", self._translate_from_enter)
-        self.input_text.bind("<Control-Return>", self._insert_newline)
-        self.input_text.bind("<Control-KP_Enter>", self._insert_newline)
-
-        action_row = tk.Frame(outer, bg=COLORS["surface"])
-        action_row.grid(row=3, column=0, sticky="ew", padx=16, pady=(0, 2))
-        paste = HoverLabel(action_row, text="粘贴", command=self.paste_from_clipboard)
-        paste.pack(side="left")
-        clear = HoverLabel(action_row, text="清空", command=self.clear)
-        clear.pack(side="left", padx=2)
-        self.counter_label = tk.Label(
-            action_row,
-            text="0 / 3000",
-            bg=COLORS["surface"],
-            fg=COLORS["faint"],
-            font=("Segoe UI", 8),
-        )
-        self.counter_label.pack(side="left", padx=8)
-        self.translate_button = RoundButton(
-            action_row,
-            text="↑",
-            command=self.translate,
-            size=34,
-        )
-        self.translate_button.pack(side="right")
-
-        separator = tk.Frame(outer, bg=COLORS["border"], height=1)
-        separator.grid(row=4, column=0, sticky="ew", padx=20)
-
-        self.result_header = tk.Frame(outer, bg=COLORS["surface"])
-        self.result_header.grid(row=5, column=0, sticky="ew", padx=20, pady=(5, 0))
-        self.result_direction_label = tk.Label(
-            self.result_header,
-            text="翻译结果",
-            bg=COLORS["surface"],
-            fg=COLORS["muted"],
-            font=("Microsoft YaHei UI", 8, "bold"),
-        )
-        self.result_direction_label.pack(side="left")
-        copy_button = HoverLabel(
-            self.result_header,
-            text="复制",
-            command=self.copy_result,
-            padx=7,
-            pady=2,
-        )
-        copy_button.pack(side="right")
-
-        self.result_text = tk.Text(
-            outer,
-            height=3,
-            wrap="word",
-            bg=COLORS["surface"],
-            fg=COLORS["muted"],
-            selectbackground="#D4D4D8",
-            selectforeground=COLORS["text"],
-            relief="flat",
-            borderwidth=0,
-            highlightthickness=0,
-            font=("Microsoft YaHei UI", 10),
-            padx=20,
-            pady=4,
-            cursor="arrow",
-        )
-        self.result_text.grid(row=6, column=0, sticky="nsew")
-        self.result_text.insert("1.0", "翻译结果会显示在这里")
-        self.result_text.configure(state="disabled")
-
-        self.footer = tk.Frame(outer, bg=COLORS["surface"])
-        self.footer.grid(row=7, column=0, sticky="ew", padx=20, pady=(0, 6))
-        self.status_label = tk.Label(
-            self.footer,
-            text="在线翻译",
-            bg=COLORS["surface"],
-            fg=COLORS["faint"],
-            font=("Microsoft YaHei UI", 8),
-        )
-        self.status_label.pack(side="left")
-        self.hotkey_hint = tk.Label(
-            self.footer,
-            text=f"{self.settings.hotkey} 召唤",
-            bg=COLORS["surface"],
-            fg=COLORS["faint"],
-            font=("Microsoft YaHei UI", 8),
-        )
-        self.hotkey_hint.pack(side="right")
-
-        self._create_resize_handles()
-        self._update_direction_label()
-
-    def _create_resize_handles(self) -> None:
-        """Create always-available resize hit areas around the border."""
-        specs = (
-            ("n", "size_ns", {"x": 0, "y": 0, "relwidth": 1, "height": RESIZE_BORDER_SIZE}),
-            ("s", "size_ns", {"x": 0, "rely": 1, "y": -RESIZE_BORDER_SIZE, "relwidth": 1, "height": RESIZE_BORDER_SIZE}),
-            ("w", "size_we", {"x": 0, "y": 0, "width": RESIZE_BORDER_SIZE, "relheight": 1}),
-            ("e", "size_we", {"relx": 1, "x": -RESIZE_BORDER_SIZE, "y": 0, "width": RESIZE_BORDER_SIZE, "relheight": 1}),
-            ("nw", "size_nw_se", {"x": 0, "y": 0, "width": RESIZE_CORNER_SIZE, "height": RESIZE_CORNER_SIZE}),
-            ("ne", "size_ne_sw", {"relx": 1, "x": -RESIZE_CORNER_SIZE, "y": 0, "width": RESIZE_CORNER_SIZE, "height": RESIZE_CORNER_SIZE}),
-            ("sw", "size_ne_sw", {"x": 0, "rely": 1, "y": -RESIZE_CORNER_SIZE, "width": RESIZE_CORNER_SIZE, "height": RESIZE_CORNER_SIZE}),
-            ("se", "size_nw_se", {"relx": 1, "rely": 1, "x": -RESIZE_CORNER_SIZE, "y": -RESIZE_CORNER_SIZE, "width": RESIZE_CORNER_SIZE, "height": RESIZE_CORNER_SIZE}),
-        )
-        for edges, cursor, placement in specs:
-            handle = tk.Frame(
-                self,
-                bg=COLORS["surface"],
-                cursor=cursor,
-                borderwidth=0,
-            )
-            handle.place(**placement)
-            handle.bind(
-                "<ButtonPress-1>",
-                lambda event, active_edges=edges: self._start_resize(event, active_edges),
-            )
-            handle.bind("<B1-Motion>", self._resize_window)
-            self._resize_handles.append(handle)
-        self._raise_resize_handles()
-
-    def _raise_resize_handles(self) -> None:
-        for handle in self._resize_handles:
-            if handle.winfo_exists():
-                handle.lift()
-
-    def open_shortcut_settings(self) -> None:
-        if self.on_hotkey_change is None:
-            self.status_label.configure(text="快捷键服务尚未启动", fg=COLORS["danger"])
-            return
-        if self._shortcut_dialog is not None and self._shortcut_dialog.winfo_exists():
-            self._shortcut_dialog.lift()
-            return
-        self._shortcut_dialog = ShortcutDialog(
-            self,
-            self.settings.hotkey,
-            self.on_hotkey_change,
-        )
-        self._apply_window_icon(self._shortcut_dialog)
-
-    @staticmethod
-    def _apply_window_icon(window: tk.Misc) -> None:
-        icon_path = app_icon_path()
-        if icon_path is None:
+        迁移只发生在内存里：目标名固定为旧凭据目标，因此每次启动都能幂等重建；
+        真正的配置由用户在设置页操作时落盘，避免启动阶段产生隐式写盘。
+        """
+        configs = self.settings.api_configs
+        if configs:
+            if self.settings.active_api_config not in {config.id for config in configs}:
+                self.settings.active_api_config = configs[0].id
+                self.settings.deepseek_model = configs[0].model
             return
         try:
-            window.iconbitmap(default=str(icon_path))
-        except tk.TclError:
+            legacy = self.credentials.read(CredentialStore.TARGET)
+        except OSError:
+            legacy = None
+        if not legacy:
+            return
+        config = ApiConfig(
+            id="default",
+            name="默认配置",
+            model=self.settings.deepseek_model,
+            target=CredentialStore.TARGET,
+        )
+        self.settings.api_configs = [config]
+        self.settings.active_api_config = config.id
+
+    def active_api_config(self) -> ApiConfig | None:
+        return _active_config(self)
+
+    def active_api_key(self) -> str | None:
+        return _read_secret(self, self.active_api_config())
+
+    def active_api_model(self) -> str:
+        config = self.active_api_config()
+        return config.model if config is not None else self.settings.deepseek_model
+
+    def glass_tint_alpha(self, settings=None) -> int:
+        """把外观设置换算成 acrylic 底色浓度：越透明 alpha 越低。"""
+        settings = settings or self.settings
+        if settings.appearance == "liquid":
+            return 0x18 + int((1 - settings.liquid_transparency / 100) * 0x60)
+        return 0x2A + int((settings.frosted_amount / 100) * 0x66)
+
+    def window_opacity(self, settings=None) -> float:
+        settings = settings or self.settings
+        if settings.appearance == "frosted":
+            return 1.0
+        amount = settings.transparent_transparency if settings.appearance == "transparent" else settings.liquid_transparency
+        return 1 - amount * 0.0045
+
+    def refresh_glass(self) -> None:
+        """按当前设置重新应用主窗与设置窗的材质。"""
+        if not self.native_glass:
+            return
+        alpha = self.glass_tint_alpha()
+        liquid = self.settings.appearance == "liquid"
+        transparent = self.settings.appearance == "transparent"
+        opacity = self.window_opacity()
+        self._on_ui_later(lambda: apply_window_material(self.window.native, alpha, liquid, opacity, transparent))
+        child = getattr(self, "_settings_window", None)
+        if child is not None:
+            self._on_ui_later(lambda: apply_window_material(child.native, alpha, liquid, opacity, transparent))
+
+    def _on_ui_later(self, callback: Callable, delay: float = 0.05) -> None:
+        """把要动窗口的活排到这次桥调用退出之后。
+
+        从页面的桥调用里同步改窗口材质/尺寸会触发 WM_SIZE，正在等回包的 WebView2 会卡住，
+        之后这条桥上所有调用都不再返回（外观预览不 settle、丢弃预览卡在原地）。
+        """
+
+        def worker() -> None:
+            time.sleep(delay)
+            try:
+                self._on_ui(callback)
+            except Exception:  # noqa: BLE001 - 窗口已经关掉，没有可刷的材质
+                return
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _markup(self, name: str = "index.html") -> str:
+        """读出前端页面并补上 nonce 与首帧外观，交给 webview 直接渲染。"""
+        markup = frontend_path(name).read_text(encoding="utf-8")
+        markup = markup.replace("__DESKTRANSLATE_NONCE__", secrets.token_urlsafe(24))
+        return with_appearance(
+            markup, appearance_attributes(self.settings, native_glass=native_glass_supported())
+        )
+
+    def _prepare_native_window(self) -> None:
+        self.native_glass = apply_window_material(
+            self.window.native, self.glass_tint_alpha(), self.settings.appearance == "liquid",
+            self.window_opacity(),
+            self.settings.appearance == "transparent",
+        )
+
+    def _set_minimum_content_size(self, window: webview.Window, width: int, height: int) -> None:
+        from System.Drawing import Size
+
+        scale = window.native.ClientSize.Width / window.evaluate_js("innerWidth")
+
+        def set_minimum() -> None:
+            # WebView2 的内容缩放可能与 WinForms 的 DeviceDpi 不同。
+            form = window.native
+            form.MinimumSize = Size(
+                ceil(width * scale) + form.Width - form.ClientSize.Width,
+                ceil(height * scale) + form.Height - form.ClientSize.Height,
+            )
+            if form.Height < form.MinimumSize.Height:
+                form.Height = form.MinimumSize.Height
+
+        self._on_ui(set_minimum)
+
+    def _set_content_size(self, window: webview.Window, width: int, height: int, *, delay: float = 0.0) -> bool:
+        """按记录的内容尺寸把窗口摆回去，返回是否已摆好。
+
+        创建窗口时 pywebview 先按带边框的尺寸摆、随后才换成无边框，WinForms 换边框样式
+        会保留客户区、把外框缩掉一圈，所以尺寸要在这里重写一遍 ClientSize。
+        缩放系数从「客户区 / 页面视口」现算：WebView2 的内容缩放和 WinForms 的 DeviceDpi
+        不是一个数，用 pywebview 的 _scale 换算会差一截。
+
+        delay > 0 时另起线程隔一会儿再摆：从页面发起的调用里直接改窗口尺寸，会把正在跑的
+        WebView2 消息处理卡住（外观预览的 await 再也不返回），必须等这一轮 JS 调用退出去。
+        """
+        try:
+            from System.Drawing import Size
+        except ImportError:  # 非 Windows 或未装 pythonnet：没有 WinForms 可摆
+            return False
+
+        inner = window.evaluate_js("innerWidth")
+        if not isinstance(inner, (int, float)) or inner <= 0:
+            return False
+        content_scale = window.native.ClientSize.Width / inner
+        self._settings_content_scale = content_scale
+        self._settings_fitted = False
+
+        def place() -> None:
+            window.native.ClientSize = Size(round(width * content_scale), round(height * content_scale))
+            self._settings_fitted = True
+
+        if not delay:
+            self._on_ui(place)
+            return True
+
+        def worker() -> None:
+            time.sleep(delay)
+            try:
+                self._on_ui(place)
+            except Exception:  # noqa: BLE001 - 窗口已经关掉，摆不摆都无所谓
+                return
+
+        threading.Thread(target=worker, daemon=True).start()
+        # 不等它摆完：调用方（页面）此刻正停在这次桥调用的 await 上，等下去只会白等到超时。
+        return True
+
+    def _on_ui(self, callback: Callable) -> object:
+        from System import Func, Object
+
+        return self.window.native.Invoke(Func[Object](callback))
+
+    def open_settings(self, tab: str = "translation") -> None:
+        # 主窗「设置」打开翻译选项页；左下角快捷键文字打开快捷键页。
+        self.settings_tab = tab if tab in {"translation", "hotkey", "window", "appearance"} else "translation"
+        with self._settings_window_lock:
+            if self._settings_window is not None:
+                child = self._settings_window
+                if self._settings_ready:
+                    child.show()
+                    child.evaluate_js(
+                        f"window.desktranslateSettings?.showTab({json.dumps(self.settings_tab)})"
+                    )
+                return
+            width, height = self._settings_size
+            child = webview.create_window(
+                "DeskTranslate 设置",
+                html=self._markup("settings.html"),
+                js_api=self.api,
+                # 记录的尺寸是页面视口，按实测比例换成 pywebview 的创建单位才不会缩一圈。
+                width=width,
+                height=height,
+                min_size=(360, 320),
+                hidden=True,
+                focus=False,
+                frameless=True,
+                easy_drag=False,
+                resizable=True,
+                background_color="#5b6669",
+                text_select=True,
+                zoomable=False,
+            )
+            self._settings_window = child
+            self._settings_ready = False
+            child.events.closing += lambda: self._on_settings_closing(child)
+            child.events.closed += lambda: self._settings_closed(child)
+            def ready() -> None:
+                # 内容尺寸由页面就绪后调 fit_settings_window 摆准，这里只管最小尺寸。
+                self._set_minimum_content_size(child, 360, 320)
+            child.events.loaded += ready
+            # 子窗口创建时消息循环已经运行，页面可能在注册回调前完成加载。
+            if child.events.loaded.is_set():
+                ready()
+            def prepare_settings_window() -> None:
+                apply_window_material(
+                    child.native, self.glass_tint_alpha(), self.settings.appearance == "liquid",
+                    0.0,
+                    self.settings.appearance == "transparent",
+                )
+                # 以非激活态进入可见流程，避免零不透明度初始化阶段提前夺走主窗焦点；
+                # 真正显示与激活统一交给页面就绪后的 show_settings_window()。
+                show_window_no_activate(child.native)
+
+            self._on_ui(prepare_settings_window)
+
+    def _remember_settings_size(self, child: webview.Window) -> None:
+        # 关闭路径上不能 evaluate_js：UI 线程正卡在 closing 回调里等不到页面回应。
+        # 页面自己报过尺寸就用页面报的；这里只是兜底，按 fit 时量到的缩放换算。
+        try:
+            form = child.native
+            scale = self._settings_content_scale
+            if form is None or not scale:
+                return
+            self._settings_size = (round(form.ClientSize.Width / scale), round(form.ClientSize.Height / scale))
+        except Exception:  # noqa: BLE001 - 兜底路径，量不到就沿用上一次的尺寸
             return
 
-    def set_hotkey_status(self, shortcut: str, error: str | None = None) -> None:
-        self.hotkey_hint.configure(text=f"{shortcut} 召唤")
-        if error:
-            self.status_label.configure(text=error, fg=COLORS["danger"])
+    def _on_settings_closing(self, child: webview.Window) -> bool:
+        if self._allow_settings_close or self.is_exiting:
+            self._remember_settings_size(child)
+            return True
+        threading.Thread(target=lambda: child.evaluate_js("window.desktranslateSettings?.requestClose()"), daemon=True).start()
+        return False
+
+    def _settings_closed(self, child: webview.Window) -> None:
+        with self._settings_window_lock:
+            if self._settings_window is child:
+                self._settings_window = None
+
+    def close_settings(self) -> None:
+        with self._settings_window_lock:
+            child = self._settings_window
+            self._settings_window = None
+        if child is not None:
+            self._allow_settings_close = True
+            try:
+                child.destroy()
+            finally:
+                self._allow_settings_close = False
+
+    def _remember_size(self, width: int, height: int) -> None:
+        # 最小化会把窗口压到 158×26 之类的尺寸；这不是用户的缩放意图。
+        if self.is_minimized or width < MIN_WINDOW_WIDTH or height < MIN_WINDOW_HEIGHT:
+            return
+        self.settings.window_width = width
+        self.settings.window_height = height
+
+    def _remember_position(self, x: int, y: int) -> None:
+        # 最小化时 Windows 报告的是 -32000 一类的哨兵坐标，落盘会让下次启动跑到屏幕外。
+        if self.is_minimized:
+            return
+        if not intersects_visible_area(
+            x,
+            y,
+            max(self.settings.window_width or WINDOW_WIDTH, MIN_WINDOW_WIDTH),
+            max(self.settings.window_height or WINDOW_HEIGHT, MIN_WINDOW_HEIGHT),
+            work_areas(),
+        ):
+            return
+        self.settings.window_x = x
+        self.settings.window_y = y
 
     def save_settings(self) -> None:
-        self._save_settings()
+        self.settings.direction = self.direction.value
+        with self._settings_lock:
+            self.settings_store.save(self.settings)
 
-    def _restore_position(self) -> None:
-        self.update_idletasks()
-        if self.settings.window_x is not None and self.settings.window_y is not None:
-            x = self.settings.window_x
-            y = self.settings.window_y
-        else:
-            screen_width = self.winfo_screenwidth()
-            screen_height = self.winfo_screenheight()
-            x = max((screen_width - WINDOW_WIDTH) // 2, 0)
-            y = max((screen_height - WINDOW_HEIGHT) // 3, 0)
-        width = max(self.settings.window_width or WINDOW_WIDTH, MIN_WINDOW_WIDTH)
-        height = max(self.settings.window_height or WINDOW_HEIGHT, MIN_WINDOW_HEIGHT)
-        self.geometry(TranslationWindow._format_geometry(width, height, x, y))
+    def set_hotkey_status(self, shortcut: str, error: str | None = None) -> None:
+        self.settings.hotkey = shortcut
+        self.hotkey_error = error
+        if self.window.events.loaded.is_set():
+            self.window.evaluate_js(f"window.desktranslate.setHotkey({json.dumps(shortcut)}, {json.dumps(error)})")
 
-    def _save_settings(self) -> None:
-        if self.winfo_exists():
-            self.settings.window_x = self.winfo_x()
-            self.settings.window_y = self.winfo_y()
-            self.settings.window_width = self.winfo_width()
-            self.settings.window_height = self.winfo_height()
-        direction_values = {
-            LanguageDirection.AUTO: "auto",
-            LanguageDirection.EN_TO_ZH: "en_to_zh",
-            LanguageDirection.ZH_TO_EN: "zh_to_en",
-        }
-        self.settings.direction = direction_values[self.direction]
-        self.settings_store.save(self.settings)
-
-    def _on_configure(self, _event: tk.Event) -> None:
-        size = (self.winfo_width(), self.winfo_height())
-        if size != self._last_rounded_size:
-            self._last_rounded_size = size
-            self.after_idle(lambda: apply_rounded_corners(self))
-        self.after_idle(self._raise_resize_handles)
-
-    def _start_drag(self, event: tk.Event) -> None:
-        self._drag_x = event.x_root - self.winfo_x()
-        self._drag_y = event.y_root - self.winfo_y()
-
-    def _drag_window(self, event: tk.Event) -> None:
-        x = event.x_root - self._drag_x
-        y = event.y_root - self._drag_y
-        self.geometry(f"{x:+d}{y:+d}")
-
-    @staticmethod
-    def _format_geometry(width: int, height: int, x: int, y: int) -> str:
-        return f"{width}x{height}{x:+d}{y:+d}"
-
-    def _start_resize(self, event: tk.Event, edges: str = "se") -> None:
-        self._resize_pointer_x = event.x_root
-        self._resize_pointer_y = event.y_root
-        self._resize_origin_x = self.winfo_x()
-        self._resize_origin_y = self.winfo_y()
-        self._resize_width = self.winfo_width()
-        self._resize_height = self.winfo_height()
-        self._resize_edges = edges
-
-    def _resize_window(self, event: tk.Event) -> None:
-        delta_x = event.x_root - self._resize_pointer_x
-        delta_y = event.y_root - self._resize_pointer_y
-        x = self._resize_origin_x
-        y = self._resize_origin_y
-        width = self._resize_width
-        height = self._resize_height
-
-        if "e" in self._resize_edges:
-            width = max(MIN_WINDOW_WIDTH, self._resize_width + delta_x)
-        if "s" in self._resize_edges:
-            height = max(MIN_WINDOW_HEIGHT, self._resize_height + delta_y)
-        if "w" in self._resize_edges:
-            width = max(MIN_WINDOW_WIDTH, self._resize_width - delta_x)
-            x = self._resize_origin_x + self._resize_width - width
-        if "n" in self._resize_edges:
-            height = max(MIN_WINDOW_HEIGHT, self._resize_height - delta_y)
-            y = self._resize_origin_y + self._resize_height - height
-
-        self.geometry(TranslationWindow._format_geometry(width, height, x, y))
-
-    def _translate_from_enter(self, _event: tk.Event) -> str:
-        self.translate()
-        return "break"
-
-    def _insert_newline(self, _event: tk.Event) -> str:
-        self.input_text.insert("insert", "\n")
-        return "break"
-
-    def _focus_input(self) -> None:
-        if self.is_visible and self.winfo_exists():
-            self.input_text.focus_set()
-
-    def _show_direction_menu(self) -> None:
-        x = self.direction_button.winfo_rootx()
-        y = self.direction_button.winfo_rooty() + self.direction_button.winfo_height() + 3
-        try:
-            self.direction_menu.tk_popup(x, y)
-        finally:
-            self.direction_menu.grab_release()
-
-    def _set_direction(self, direction: LanguageDirection) -> None:
-        self.direction = direction
-        self._update_direction_label()
-
-    def _swap_direction(self) -> None:
-        if self.direction == LanguageDirection.EN_TO_ZH:
-            self.direction = LanguageDirection.ZH_TO_EN
-        elif self.direction == LanguageDirection.ZH_TO_EN:
-            self.direction = LanguageDirection.EN_TO_ZH
-        else:
-            text = self._get_input()
-            self.direction = (
-                LanguageDirection.EN_TO_ZH
-                if self._looks_chinese(text)
-                else LanguageDirection.ZH_TO_EN
-            )
-        self._update_direction_label()
-
-    @staticmethod
-    def _looks_chinese(text: str) -> bool:
-        return bool(re.search(r"[\u3400-\u4dbf\u4e00-\u9fff]", text))
-
-    def _effective_direction_text(self) -> str:
-        if self.direction == LanguageDirection.EN_TO_ZH:
-            return "英文 → 中文"
-        if self.direction == LanguageDirection.ZH_TO_EN:
-            return "中文 → 英文"
-        if not self._get_input().strip():
-            return "自动检测"
-        return "自动 · 中文 → 英文" if self._looks_chinese(self._get_input()) else "自动 · 英文 → 中文"
-
-    def _update_direction_label(self) -> None:
-        self.direction_button.configure(text=self._effective_direction_text())
-
-    def _on_input_modified(self, _event: tk.Event) -> None:
-        if not self.input_text.edit_modified():
-            return
-        self.input_text.edit_modified(False)
-        length = len(self._get_input())
-        self.counter_label.configure(
-            text=f"{length} / {MAX_INPUT_CHARACTERS}",
-            fg=COLORS["danger"] if length > MAX_INPUT_CHARACTERS else COLORS["faint"],
-        )
-        if self.direction == LanguageDirection.AUTO:
-            self._update_direction_label()
-
-    def _get_input(self) -> str:
-        return self.input_text.get("1.0", "end-1c")
-
-    def _set_input(self, text: str) -> None:
-        self.input_text.delete("1.0", "end")
-        self.input_text.insert("1.0", text)
-        self.input_text.edit_modified(True)
-
-    def _set_result(self, text: str, *, color: str = COLORS["text"]) -> None:
-        self.result_text.configure(state="normal", fg=color)
-        self.result_text.delete("1.0", "end")
-        self.result_text.insert("1.0", text)
-        self.result_text.configure(state="disabled")
-
-    def translate(self) -> None:
-        text = self._get_input().strip()
-        if not text:
-            self.status_label.configure(text="请先输入要翻译的内容", fg=COLORS["danger"])
-            self.input_text.focus_set()
-            return
-        if len(text) > MAX_INPUT_CHARACTERS:
-            self.status_label.configure(
-                text=f"内容过长，请控制在 {MAX_INPUT_CHARACTERS} 字以内",
-                fg=COLORS["danger"],
-            )
-            return
-
-        self.request_id += 1
-        request_id = self.request_id
-        self.translate_button.set_busy(True)
-        self.status_label.configure(text="正在翻译…", fg=COLORS["muted"])
-        self.provider_label.configure(text="●  翻译中", fg="#D97706")
-        future = self.executor.submit(self.translator.translate, text, self.direction)
-        future.add_done_callback(
-            lambda completed: self.worker_messages.put(_WorkerMessage(request_id, completed))
-        )
-
-    def _poll_worker_messages(self) -> None:
-        if self.is_exiting:
-            return
-        try:
-            while True:
-                message = self.worker_messages.get_nowait()
-                if message.request_id == self.request_id:
-                    self._finish_translation(message.future)
-        except queue.Empty:
-            pass
-        self.after(80, self._poll_worker_messages)
-
-    def _finish_translation(self, future: Future[TranslationResult]) -> None:
-        self.translate_button.set_busy(False)
-        self.provider_label.configure(text="●  在线", fg=COLORS["success"])
-        try:
-            result = future.result()
-        except TranslationNoResultError as exc:
-            self._set_result(f"未找到译文\n{exc}", color=COLORS["danger"])
-            self.status_label.configure(text="请检查英文拼写或换一种表达", fg=COLORS["danger"])
-            return
-        except TranslationError as exc:
-            self._set_result(f"翻译失败\n{exc}", color=COLORS["danger"])
-            self.status_label.configure(text="请检查网络后重试", fg=COLORS["danger"])
-            return
-        except Exception:
-            self._set_result("翻译失败\n发生了未预期的错误", color=COLORS["danger"])
-            self.status_label.configure(text="请稍后重试", fg=COLORS["danger"])
-            return
-
-        self._set_result(result.text)
-        source = "中文" if result.source_language.lower().startswith("zh") else "英文"
-        target = "中文" if result.target_language.lower().startswith("zh") else "英文"
-        self.result_direction_label.configure(text=f"{source} → {target}")
-        if result.corrected_source:
-            original = self._get_input().strip()
-            self.status_label.configure(
-                text=f"已纠正拼写：{original} → {result.corrected_source}",
-                fg=COLORS["success"],
-            )
-        else:
-            self.status_label.configure(text="翻译完成 · 结果可直接复制", fg=COLORS["faint"])
-
-    def paste_from_clipboard(self) -> None:
-        try:
-            text = self.clipboard_get()
-        except tk.TclError:
-            self.status_label.configure(text="剪贴板中没有文本", fg=COLORS["danger"])
-            return
-        self._set_input(str(text).strip())
-        self.input_text.focus_set()
-
-    def translate_clipboard(self) -> None:
-        self.show()
-        self.paste_from_clipboard()
-        if self._get_input().strip():
-            self.translate()
-
-    def copy_result(self) -> None:
-        result = self.result_text.get("1.0", "end-1c").strip()
-        if not result or result == "翻译结果会显示在这里" or result.startswith("翻译失败"):
-            self.status_label.configure(text="当前没有可复制的结果", fg=COLORS["danger"])
-            return
-        self.clipboard_clear()
-        self.clipboard_append(result)
-        self.update_idletasks()
-        self.status_label.configure(text="已复制到剪贴板", fg=COLORS["success"])
-
-    def clear(self) -> None:
-        self._set_input("")
-        self._set_result("翻译结果会显示在这里", color=COLORS["muted"])
-        self.result_direction_label.configure(text="翻译结果")
-        self.status_label.configure(text="在线翻译", fg=COLORS["faint"])
-        self.input_text.focus_set()
+    def dispatch(self, callback: Callable[[], None]) -> None:
+        if not self.is_exiting:
+            callback()
 
     def toggle_visibility(self) -> None:
-        if self.is_visible:
+        if self.is_minimized:
+            self.show()
+        elif self.is_visible:
             self.hide()
         else:
             self.show()
 
+    def minimize(self) -> None:
+        """最小化到任务栏：窗口仍然存在，不触发隐藏到托盘的可见性变化。"""
+        if self.is_exiting:
+            return
+        self.subtitles.stop()
+        self.save_settings()
+        from System.Windows.Forms import FormWindowState
+
+        self._on_ui(lambda: setattr(self.window.native, "WindowState", FormWindowState.Minimized))
+        self.is_minimized = True
+
     def show(self) -> None:
         if self.is_exiting:
             return
-        self.deiconify()
-        self.lift()
-        self.attributes("-topmost", True)
-        self.after(120, lambda: self.attributes("-topmost", False))
+        was_hidden = not self.is_visible or self.is_minimized
+        if self.is_minimized:
+            from System.Windows.Forms import FormWindowState
+
+            # 从任务栏恢复被最小化的窗口时先回到正常状态，否则仍然只剩任务栏按钮。
+            self._on_ui(lambda: setattr(self.window.native, "WindowState", FormWindowState.Normal))
+            self.is_minimized = False
+        self.window.show()
         self.is_visible = True
-        apply_rounded_corners(self)
         if self.on_visibility_changed:
             self.on_visibility_changed(True)
-        self.after(140, self._focus_input)
+        if self.window.events.loaded.is_set():
+            self.window.evaluate_js("window.desktranslate.focus();" + (" window.desktranslate.subtitleStopped()" if was_hidden else ""))
 
     def hide(self) -> None:
         if self.is_exiting:
             return
-        self._save_settings()
-        self.withdraw()
+        self.subtitles.stop()
+        self.save_settings()
+        self.window.hide()
         self.is_visible = False
         if self.on_visibility_changed:
             self.on_visibility_changed(False)
 
+    def translate_clipboard(self) -> None:
+        self.show()
+        text = self.api.read_clipboard().strip()
+        # json.dumps 保留剪贴板文本边界，不能把内容拼成可执行脚本。
+        self.window.evaluate_js(f"window.desktranslate.setInput({json.dumps(text)}, true)")
+
+    def _on_closing(self) -> bool:
+        if self.is_exiting:
+            return True
+        if self.settings.close_action == "exit":
+            # 用户在设置里选择「直接退出」：放行关闭，主循环随后结束。
+            self.save_settings()
+            self.is_exiting = True
+            self.stopped.set()
+            return True
+        # FormClosing 在界面线程同步触发；先取消关闭，再由消息队列隐藏。
+        from System import Action
+
+        self.window.native.BeginInvoke(Action(self.hide))
+        return False
+
+    def _on_closed(self) -> None:
+        self.subtitles.stop()
+        self.is_exiting = True
+        self.stopped.set()
+
     def request_exit(self) -> None:
         if self.is_exiting:
             return
+        self.subtitles.stop()
+        self.save_settings()
         self.is_exiting = True
-        self._save_settings()
-        self.executor.shutdown(wait=False, cancel_futures=True)
-        self.destroy()
+        self.stopped.set()
+        self.close_settings()
+        self.window.destroy()
+
+    def run(self, on_started: Callable[[], None] | None = None, *, debug: bool = False) -> None:
+        icon = app_icon_path()
+        # private_mode 默认 True：每次启动都新建临时 WebView2 profile，浏览器进程、
+        # GPU 缓存和已编译的脚本缓存全部重来，窗口出现后那段灰底也就拖得更久。
+        # 固定 profile 目录后二次启动直接复用，首次仍要初始化一次。
+        storage: Path | None = self.settings_store.path.parent / "webview"
+        try:
+            storage.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            storage = None
+        webview.start(
+            on_started, gui="edgechromium", debug=debug, icon=str(icon) if icon else None,
+            private_mode=storage is None,
+            storage_path=str(storage) if storage is not None else None,
+        )

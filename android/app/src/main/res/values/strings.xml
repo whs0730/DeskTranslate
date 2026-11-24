@@ -1,0 +1,85 @@
+<resources>
+    <string name="app_name">DeskTranslate</string>
+
+    <string name="screen_title">DeskTranslate</string>
+
+    <string name="source_title">原文</string>
+    <string name="source_hint">输入要翻译的中文或英文</string>
+    <string name="clear">清空</string>
+    <string name="byte_counter">%1$d / 500 字节</string>
+    <string name="char_counter">%1$d / 3000 字符</string>
+
+    <string name="direction_auto">自动</string>
+    <string name="direction_zh_to_en">中译英</string>
+    <string name="direction_en_to_zh">英译中</string>
+
+    <string name="translate">翻译</string>
+    <string name="translating">翻译中…</string>
+
+    <string name="result_title">译文</string>
+    <string name="result_with_direction">译文 · %1$s</string>
+    <string name="result_placeholder">译文会显示在这里</string>
+    <string name="result_loading">正在翻译…</string>
+    <string name="result_alternatives">其他译法：%1$s</string>
+    <string name="copy">复制</string>
+    <string name="clip_label">译文</string>
+    <string name="copied">已复制译文</string>
+
+    <!-- Settings -->
+    <string name="settings">设置</string>
+    <string name="close_settings">关闭设置</string>
+    <string name="settings_subtitle">翻译服务与 API 配置</string>
+    <string name="settings_tab_translation">翻译选项</string>
+    <string name="settings_provider_label">翻译服务</string>
+    <string name="provider_mymemory_title">MyMemory · 免费翻译</string>
+    <string name="provider_mymemory_desc">免密钥使用，单次最多 500 字节</string>
+    <string name="provider_deepseek_title">DeepSeek · 自备 API Key</string>
+    <string name="provider_deepseek_desc">接入个人密钥，单次最多 3000 字符</string>
+    <string name="provider_badge_mymemory">MyMemory</string>
+    <string name="provider_badge_deepseek">DeepSeek · %1$s</string>
+
+    <string name="api_configs_caption">已保存的 API 配置</string>
+    <string name="api_config_add">新增配置</string>
+    <string name="api_config_empty">尚未保存配置。点击「新增配置」填写名称和 API Key。</string>
+    <string name="api_config_edit">编辑</string>
+    <string name="api_config_delete">删除</string>
+    <string name="api_config_editor_new">新增配置</string>
+    <string name="api_config_editor_edit">编辑配置</string>
+    <string name="api_config_hint_new">保存后加入列表</string>
+    <string name="api_config_hint_active">当前使用中</string>
+    <string name="api_config_name_label">名称</string>
+    <string name="api_config_name_hint">例如：个人配置</string>
+    <string name="api_config_model_label">模型</string>
+    <string name="api_config_key_label">API Key</string>
+    <string name="api_config_key_hint_new">填写你的 DeepSeek API Key</string>
+    <string name="api_config_key_hint_keep">已保存密钥，留空保留</string>
+    <string name="api_config_key_help">密钥经本机 Android Keystore 加密保存，不参与云备份，界面只显示首尾掩码；编辑时留空表示保留已保存的密钥。</string>
+    <string name="api_config_meta_key">%1$s · %2$s</string>
+    <string name="api_config_meta_missing">%1$s · 未保存密钥</string>
+    <string name="api_config_save">保存配置</string>
+    <string name="api_config_saved_new">已新增 API 配置</string>
+    <string name="api_config_saved_edit">已保存 API 配置</string>
+    <string name="api_config_pending_delete">删除将在保存设置后生效</string>
+    <string name="settings_cancel">取消</string>
+    <string name="settings_save">保存设置</string>
+    <string name="settings_saved">设置已保存</string>
+    <string name="settings_error_need_key">请先在「API 配置」中新增并保存 DeepSeek API Key。</string>
+
+    <!-- Errors -->
+    <string name="error_empty">请输入要翻译的内容。</string>
+    <string name="error_too_long">原文过长（最多 500 字节），请缩短文本后重试。</string>
+    <string name="error_too_long_deepseek">原文过长（最多 3000 字符），请缩短文本后重试。</string>
+    <string name="error_direction_use_en_to_zh">当前输入为纯英文，请切换到「英译中」后再翻译。</string>
+    <string name="error_direction_use_zh_to_en">当前输入为纯中文，请切换到「中译英」后再翻译。</string>
+    <string name="error_missing_api_key">请先在右上角设置中填写 DeepSeek API Key。</string>
+    <string name="error_auth_invalid">API Key 无效，请在设置中检查。</string>
+    <string name="error_insufficient_balance">DeepSeek 账户余额不足。</string>
+    <string name="error_rate_limited">DeepSeek 请求过于频繁，请稍后重试。</string>
+    <string name="error_incomplete_result">DeepSeek 未完整生成译文，请缩短原文后重试。</string>
+    <string name="error_network">网络不可用，请检查网络连接。</string>
+    <string name="error_timeout">请求超时，请稍后重试。</string>
+    <string name="error_service">翻译服务暂时不可用，请稍后重试。</string>
+    <string name="error_empty_result">没有获取到译文，请换个说法试试。</string>
+    <string name="error_invalid_response">翻译服务返回异常，请稍后重试。</string>
+    <string name="error_unknown">翻译失败，请稍后重试。</string>
+</resources>

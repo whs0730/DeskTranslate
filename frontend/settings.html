@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'">
+  <title>DeskTranslate 设置</title>
+  <link rel="stylesheet" href="./style.css">
+  <script type="module" src="./settings.js"></script>
+</head>
+<body class="settings-page">
+  <header class="settings-titlebar" id="settings-titlebar">
+    <span class="settings-title">DeskTranslate 设置</span>
+    <button type="button" class="icon-button close-button" id="settings-close" tabindex="-1" aria-label="关闭设置" title="关闭设置"><svg viewBox="0 0 24 24"><path d="m6 6 12 12M6 18 18 6"/></svg></button>
+  </header>
+  <main class="settings-shell" tabindex="-1">
+    <header class="settings-heading"><h1>设置</h1><p>翻译服务、网络连接、快捷键与窗口行为</p></header>
+    <form id="settings-form">
+      <div class="settings-body">
+        <nav class="settings-nav" role="tablist" aria-label="设置分类" aria-orientation="vertical">
+          <button type="button" class="settings-tab" role="tab" id="settings-tab-translation" aria-controls="settings-panel-translation" aria-selected="true">翻译选项</button>
+          <button type="button" class="settings-tab" role="tab" id="settings-tab-hotkey" aria-controls="settings-panel-hotkey" aria-selected="false" tabindex="-1">快捷键</button>
+          <button type="button" class="settings-tab" role="tab" id="settings-tab-window" aria-controls="settings-panel-window" aria-selected="false" tabindex="-1">窗口</button>
+          <button type="button" class="settings-tab" role="tab" id="settings-tab-appearance" aria-controls="settings-panel-appearance" aria-selected="false" tabindex="-1">外观</button>
+        </nav>
+        <div class="settings-fields">
+          <section id="settings-panel-translation" class="settings-panel" role="tabpanel" aria-labelledby="settings-tab-translation" tabindex="0">
+            <label for="provider">翻译服务</label>
+            <select id="provider">
+              <option value="mymemory">MyMemory · 免费翻译</option>
+              <option value="deepseek">DeepSeek · 自备 API Key</option>
+            </select>
+            <fieldset id="deepseek-fields" hidden>
+              <div class="field-header">
+                <span class="field-caption">已保存的 API 配置</span>
+                <button type="button" class="text-button" id="api-config-add">新增配置</button>
+              </div>
+              <div id="api-config-list" class="api-config-list" role="group" aria-label="已保存的 API 配置">
+                <div class="api-config-editor" id="api-config-editor" hidden>
+                  <div class="editor-heading">
+                    <span id="api-config-editor-title">新增配置</span>
+                    <span class="editor-hint" id="api-config-editor-hint"></span>
+                  </div>
+                  <label for="api-config-name">名称</label>
+                  <input id="api-config-name" type="text" maxlength="40" autocomplete="off" spellcheck="false">
+                  <label for="api-config-model">模型</label>
+                  <select id="api-config-model">
+                    <option value="deepseek-flash">DeepSeek Flash</option>
+                    <option value="deepseek-v4-pro">DeepSeek V4 Pro</option>
+                  </select>
+                  <label for="api-key">API Key</label>
+                  <input id="api-key" type="password" placeholder="填写你的 DeepSeek API Key" autocomplete="off" spellcheck="false" aria-describedby="api-key-help">
+                  <p class="field-help" id="api-key-help">密钥保存在 Windows 凭据管理器中，界面只显示首尾掩码；编辑时留空表示保留已保存的密钥。</p>
+                  <div class="editor-actions">
+                    <button type="button" class="text-button" id="api-config-cancel">取消</button>
+                    <button type="button" class="translate-button" id="api-config-save">保存配置</button>
+                  </div>
+                </div>
+              </div>
+              <p class="api-config-empty" id="api-config-empty">尚未保存配置。点击「新增配置」填写名称和 API Key。</p>
+            </fieldset>
+            <label for="network-mode">网络连接</label>
+            <select id="network-mode" aria-describedby="network-help">
+              <option value="auto">自动 · 代理失败时尝试直连</option>
+              <option value="system">始终使用系统代理配置</option>
+              <option value="direct">始终直连</option>
+            </select>
+            <p class="field-help" id="network-help">自动模式会重新读取代理配置；连接失败时最多重试一次，仍访问同一服务。不希望自动尝试直连时，请选择系统代理配置。</p>
+          </section>
+          <section id="settings-panel-hotkey" class="settings-panel" role="tabpanel" aria-labelledby="settings-tab-hotkey" tabindex="0" hidden>
+            <label for="hotkey-input">全局召唤快捷键</label>
+            <input id="hotkey-input" autocomplete="off" spellcheck="false" aria-describedby="hotkey-help settings-error">
+            <p class="field-help" id="hotkey-help">点击输入框，然后按下 Ctrl / Alt / Shift 和字母、数字或 F1–F12。</p>
+          </section>
+          <section id="settings-panel-window" class="settings-panel" role="tabpanel" aria-labelledby="settings-tab-window" tabindex="0" hidden>
+            <label for="close-action">点击关闭按钮时</label>
+            <select id="close-action" aria-describedby="close-action-help">
+              <option value="tray">隐藏到托盘（推荐）</option>
+              <option value="exit">直接退出应用</option>
+            </select>
+            <p class="field-help" id="close-action-help">隐藏到托盘时程序继续在后台运行，可用快捷键或托盘图标再次唤出；直接退出会结束所有后台功能。</p>
+          </section>
+          <section id="settings-panel-appearance" class="settings-panel" role="tabpanel" aria-labelledby="settings-tab-appearance" tabindex="0" hidden>
+            <fieldset class="appearance-options" id="appearance-options">
+              <legend class="field-caption">窗口外观</legend>
+              <label class="appearance-card" data-appearance="frosted">
+                <input type="radio" name="appearance" value="frosted">
+                <span class="appearance-swatch frosted" aria-hidden="true"></span>
+                <span class="appearance-copy">
+                  <span class="appearance-name">磨砂玻璃</span>
+                  <span class="appearance-hint">当前外观：柔和雾面，文字对比最稳。</span>
+                </span>
+              </label>
+              <label class="appearance-card" data-appearance="liquid">
+                <input type="radio" name="appearance" value="liquid">
+                <span class="appearance-swatch liquid" aria-hidden="true"></span>
+                <span class="appearance-copy">
+                  <span class="appearance-name">液态玻璃</span>
+                  <span class="appearance-hint">透出窗口后的内容，可调整颜色和透明度。</span>
+                </span>
+              </label>
+              <label class="appearance-card" data-appearance="transparent">
+                <input type="radio" name="appearance" value="transparent">
+                <span class="appearance-swatch transparent" aria-hidden="true"></span>
+                <span class="appearance-copy">
+                  <span class="appearance-name">纯透明</span>
+                  <span class="appearance-hint">不添加玻璃折射或模糊，可单独调节透明度。</span>
+                </span>
+              </label>
+            </fieldset>
+            <p class="field-help" id="appearance-help">修改会同步预览，保存后保留。</p>
+            <div class="appearance-tuning" id="appearance-tuning-frosted">
+              <label for="frosted-amount">磨砂度 <span class="tuning-value" id="frosted-amount-value">60%</span></label>
+              <input type="range" id="frosted-amount" min="0" max="100" step="5" value="60" aria-describedby="frosted-amount-help">
+              <p class="field-help" id="frosted-amount-help">数值越高，磨砂越重、背景越柔和；调到 0 时最清透。</p>
+            </div>
+            <div class="appearance-tuning" id="appearance-tuning-liquid" hidden>
+              <label for="liquid-transparency">透明度 <span class="tuning-value" id="liquid-transparency-value">40%</span></label>
+              <input type="range" id="liquid-transparency" min="0" max="100" step="5" value="40" aria-describedby="liquid-transparency-help">
+              <p class="field-help" id="liquid-transparency-help">数值越高窗口越通透，文字和按钮也会变淡。</p>
+              <label for="liquid-color">玻璃颜色</label>
+              <input type="color" id="liquid-color" value="#475658" aria-describedby="liquid-color-help">
+              <p class="field-help" id="liquid-color-help">选择深色可让浅色文字更清晰。</p>
+            </div>
+            <div class="appearance-tuning" id="appearance-tuning-transparent" hidden>
+              <label for="transparent-transparency">透明度 <span class="tuning-value" id="transparent-transparency-value">40%</span></label>
+              <input type="range" id="transparent-transparency" min="0" max="100" step="5" value="40" aria-describedby="transparent-transparency-help">
+              <p class="field-help" id="transparent-transparency-help">窗口、文字和按钮会一起变淡。</p>
+            </div>
+          </section>
+        </div>
+      </div>
+      <div class="settings-feedback"><p id="settings-error" class="error" role="alert"></p><p id="settings-status" class="save-hint" role="status" aria-live="polite"></p></div>
+      <footer class="settings-actions"><button type="button" class="text-button" id="cancel-settings">取消</button><button type="submit" class="translate-button" data-glass-surface>保存设置</button></footer>
+    </form>
+  </main>
+  <dialog id="appearance-confirm" aria-labelledby="appearance-confirm-title" aria-describedby="appearance-confirm-description">
+    <h2 id="appearance-confirm-title">保存外观设置？</h2>
+    <p id="appearance-confirm-description">外观预览尚未保存。是否保存后继续？</p>
+    <div class="appearance-confirm-actions">
+      <button type="button" id="appearance-discard">不保存</button>
+      <button type="button" id="appearance-continue" autofocus>继续编辑</button>
+      <button type="button" id="appearance-save">保存</button>
+    </div>
+  </dialog>
+  <div class="resize-edge n" data-resize="n"></div><div class="resize-edge s" data-resize="s"></div>
+  <div class="resize-edge w" data-resize="w"></div><div class="resize-edge e" data-resize="e"></div>
+  <div class="resize-corner nw" data-resize="nw"></div><div class="resize-corner ne" data-resize="ne"></div>
+  <div class="resize-corner sw" data-resize="sw"></div><div class="resize-corner se" data-resize="se"></div>
+</body>
+</html>

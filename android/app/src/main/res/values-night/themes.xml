@@ -1,0 +1,6 @@
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!--
+      The Material3 theme is shared with the light configuration. Night colors
+      are supplied by values-night/colors.xml, so no style override is needed.
+    -->
+</resources>

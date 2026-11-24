@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="18dp"
+    android:height="18dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M5,12H19M13,6L19,12L13,18"
+        android:strokeWidth="2.1"
+        android:strokeColor="@color/mint_button_text"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+</vector>

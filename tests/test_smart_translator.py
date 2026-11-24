@@ -13,7 +13,7 @@ from tests.test_translator import FakeResponse
 
 
 class LanguageToolCorrectorTests(unittest.TestCase):
-    @patch("desktranslate.translator.request.urlopen")
+    @patch("desktranslate.network.request.OpenerDirector.open")
     def test_applies_spelling_replacements_from_right_to_left(self, urlopen: Mock) -> None:
         payload = {
             "matches": [

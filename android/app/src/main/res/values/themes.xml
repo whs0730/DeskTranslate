@@ -1,0 +1,15 @@
+<resources>
+    <!-- Base application theme. -->
+    <style name="Base.Theme.DeskTranslate" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="android:windowBackground">@color/screen_bg_center</item>
+        <item name="colorPrimary">@color/mint_indicator</item>
+        <item name="colorOnPrimary">@color/mint_button_text</item>
+        <item name="colorSurface">@color/screen_bg_center</item>
+        <item name="colorOnSurface">@color/glass_text_primary</item>
+        <item name="colorOnSurfaceVariant">@color/glass_text_secondary</item>
+        <item name="colorError">@color/glass_error</item>
+        <item name="colorControlActivated">@color/glass_text_primary</item>
+    </style>
+
+    <style name="Theme.DeskTranslate" parent="Base.Theme.DeskTranslate" />
+</resources>

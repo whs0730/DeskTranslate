@@ -1,3 +1,7 @@
 Pillow==12.3.0
 pystray==0.19.5
+pywebview==6.2.1
+PyAudioWPatch==0.2.12.9
+sherpa-onnx==2.0.2
+numpy==2.5.5
 

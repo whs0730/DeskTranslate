@@ -11,6 +11,9 @@ __pycache__/
 .pyright/
 .tox/
 .nox/
+node_modules/
+models/
+src/desktranslate/web/
 
 # Test and coverage output
 .coverage
@@ -49,3 +52,37 @@ Desktop.ini
 *.tmp
 *.bak
 *~
+
+
+# Local project handoffs, research notes and memory backups
+.ai-memory.toml
+.codegraph/
+/HANDOFF.md
+/android/HANDOFF.md
+/DeskTranslate-字幕可借鉴清单.md
+/LingoCrew-实时字幕技术报告.md
+/ai-memory-*.tar.gz
+/ai-memory-recovery-snapshot/
+/效果.png
+
+# Runtime diagnostics
+*.log
+DeskTranslate-selftest.json
+
+# Android local caches, SDK paths and signing material
+.gradle/
+.kotlin/
+local.properties
+/android/gradle/gradle-daemon-jvm.properties
+*.jks
+*.keystore
+keystore.properties
+signing.properties
+
+# Android packages are distributed as release assets
+/android/app/release/
+/android/app/debug/
+*.apk
+*.apk.idsig
+*.aab
+*.apks

@@ -85,7 +85,7 @@ class MyMemoryTranslatorTests(unittest.TestCase):
     def setUp(self) -> None:
         self.translator = MyMemoryTranslator()
 
-    @patch("desktranslate.translator.request.urlopen")
+    @patch("desktranslate.network.request.OpenerDirector.open")
     def test_successfully_parses_translation_and_request_direction(
         self, mock_urlopen
     ) -> None:
@@ -103,10 +103,36 @@ class MyMemoryTranslatorTests(unittest.TestCase):
         query = parse.parse_qs(parse.urlsplit(api_request.full_url).query)
         self.assertEqual(query["q"], ["hello and welcome"])
         self.assertEqual(query["langpair"], ["en|zh-CN"])
-        self.assertEqual(mock_urlopen.call_args.kwargs["timeout"], 3.5)
+        self.assertEqual(mock_urlopen.call_args.kwargs["timeout"], 1.75)
         self.assertTrue(api_request.full_url.startswith("https://"))
 
-    @patch("desktranslate.translator.request.urlopen")
+    @patch("desktranslate.network.request.OpenerDirector.open")
+    def test_strips_mymemory_alignment_wrappers(self, mock_urlopen) -> None:
+        # MyMemory returns translation-memory alignment tags around the matched
+        # segment; the UI renders text, so they must never reach the user.
+        mock_urlopen.return_value = FakeResponse(
+            response_payload('<g id="252">Hello </g>World.')
+        )
+
+        result = self.translator.translate("你好，世界。")
+
+        self.assertEqual(result.text, "Hello World.")
+
+    @patch("desktranslate.network.request.OpenerDirector.open")
+    def test_alignment_stripping_keeps_other_markup_and_entities(
+        self, mock_urlopen
+    ) -> None:
+        mock_urlopen.return_value = FakeResponse(
+            response_payload(
+                '<g id="1">你好</g> &amp; <b>bold</b> &lt;g&gt;'
+            )
+        )
+
+        result = self.translator.translate("你好")
+
+        self.assertEqual(result.text, "你好 & <b>bold</b> <g>")
+
+    @patch("desktranslate.network.request.OpenerDirector.open")
     def test_explicit_direction_overrides_detection(self, mock_urlopen) -> None:
         mock_urlopen.return_value = FakeResponse(response_payload("forced"))
 
@@ -121,7 +147,7 @@ class MyMemoryTranslatorTests(unittest.TestCase):
         query = parse.parse_qs(parse.urlsplit(api_request.full_url).query)
         self.assertEqual(query["langpair"], ["en|zh-CN"])
 
-    @patch("desktranslate.translator.request.urlopen")
+    @patch("desktranslate.network.request.OpenerDirector.open")
     def test_each_request_stays_under_limit_and_results_keep_order(
         self, mock_urlopen
     ) -> None:
@@ -133,7 +159,7 @@ class MyMemoryTranslatorTests(unittest.TestCase):
             chunk = query["q"][0]
             requested_chunks.append(chunk)
             self.assertLessEqual(len(chunk.encode("utf-8")), MAX_QUERY_BYTES)
-            self.assertEqual(timeout, 10.0)
+            self.assertEqual(timeout, 5.0)
             return FakeResponse(response_payload(chunk))
 
         mock_urlopen.side_effect = echo_chunk
@@ -145,7 +171,7 @@ class MyMemoryTranslatorTests(unittest.TestCase):
         self.assertEqual(result.text, source)
         self.assertEqual(mock_urlopen.call_count, len(requested_chunks))
 
-    @patch("desktranslate.translator.request.urlopen")
+    @patch("desktranslate.network.request.OpenerDirector.open")
     def test_malformed_json_raises_clear_response_error(
         self, mock_urlopen
     ) -> None:
@@ -156,7 +182,7 @@ class MyMemoryTranslatorTests(unittest.TestCase):
         ):
             self.translator.translate("hello")
 
-    @patch("desktranslate.translator.request.urlopen")
+    @patch("desktranslate.network.request.OpenerDirector.open")
     def test_missing_translation_raises_clear_response_error(
         self, mock_urlopen
     ) -> None:
@@ -169,7 +195,7 @@ class MyMemoryTranslatorTests(unittest.TestCase):
         ):
             self.translator.translate("hello")
 
-    @patch("desktranslate.translator.request.urlopen")
+    @patch("desktranslate.network.request.OpenerDirector.open")
     def test_http_failure_uses_custom_exception(self, mock_urlopen) -> None:
         mock_urlopen.side_effect = error.HTTPError(
             "https://api.mymemory.translated.net/get",
@@ -182,7 +208,7 @@ class MyMemoryTranslatorTests(unittest.TestCase):
         with self.assertRaisesRegex(TranslationHTTPError, "HTTP status 429"):
             self.translator.translate("hello")
 
-    @patch("desktranslate.translator.request.urlopen")
+    @patch("desktranslate.network.request.OpenerDirector.open")
     def test_timeout_uses_custom_exception(self, mock_urlopen) -> None:
         mock_urlopen.side_effect = socket.timeout("timed out")
 
@@ -191,7 +217,7 @@ class MyMemoryTranslatorTests(unittest.TestCase):
         ):
             self.translator.translate("hello", timeout=2)
 
-    @patch("desktranslate.translator.request.urlopen")
+    @patch("desktranslate.network.request.OpenerDirector.open")
     def test_whitespace_does_not_make_a_network_request(
         self, mock_urlopen
     ) -> None:

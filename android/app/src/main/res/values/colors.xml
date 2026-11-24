@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="screen_bg_center">#DCEAF6</color>
+    <color name="glass_divider">#24172838</color>
+    <color name="glass_ghost_pressed">#1E172838</color>
+
+    <!-- Crisp dark ink over airy translucent light liquid glass -->
+    <color name="glass_text_primary">#0F1D26</color>
+    <color name="glass_text_secondary">#3C5260</color>
+    <color name="glass_text_placeholder">#5B7180</color>
+    <color name="glass_error">#B92E2A</color>
+
+    <!-- Restrained mint accent -->
+    <color name="mint_accent_text">#0D6E4F</color>
+    <color name="mint_button_text">#0C3125</color>
+    <color name="mint_indicator">#11855F</color>
+    <color name="pos_badge_bg">#2818A87A</color>
+    <color name="pos_badge_stroke">#45127B59</color>
+</resources>
